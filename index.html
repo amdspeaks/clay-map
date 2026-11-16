@@ -509,8 +509,9 @@
   function centerOnMe(fly) {
     if (!meLngLat) return;
     const center = [meLngLat.lng, meLngLat.lat];
-    if (fly) map.flyTo({ center, zoom: Math.max(map.getZoom(), 16), duration: 1500, essential: true });
-    else map.easeTo({ center, duration: 600 });
+    // { byFollow: true } tags these moves so the "stop following" check below ignores them
+    if (fly) map.flyTo({ center, zoom: Math.max(map.getZoom(), 16), duration: 1500, essential: true }, { byFollow: true });
+    else map.easeTo({ center, duration: 600 }, { byFollow: true });
   }
 
   function onLocateClick() {
@@ -554,7 +555,16 @@
     watchId = null;
   }
   // Panning the map yourself stops following (zooming/rotating keeps it, like Google Maps)
-  map.on('dragstart', () => { if (following) { following = false; setLocState(meLngLat ? 'active' : ''); } });
+  function stopFollowing() { if (following) { following = false; setLocState(meLngLat ? 'active' : ''); } }
+  map.on('dragstart', stopFollowing);
+  // Anything else that sends the camera somewhere (pin click, search, country button, route framing,
+  // arrow keys) also stops following, or the next GPS update would yank the view back to you.
+  // Zoom/rotate gestures and the +/- buttons carry an originalEvent and keep following.
+  map.on('movestart', e => {
+    if (!following || e.byFollow) return;
+    const oe = e.originalEvent;
+    if (!oe || (oe.type === 'keydown' && /^Arrow/.test(oe.key))) stopFollowing();
+  });
 
   // Fallback: next click on the map sets your position manually
   let placingMe = false;
