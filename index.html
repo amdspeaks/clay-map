@@ -124,6 +124,53 @@
   .pin-edit button { flex: 1; border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer; font: inherit; }
   .pin-edit .copy { background: #eef2f6; color: #333; }
   .pin-edit .del { background: #fdecec; color: #b42318; }
+  .pin-edit .dirb, .pin-pop .dirb { background: #2f80ed; color: #fff; }
+
+  /* ---- Directions panel ---- */
+  #dir { position: absolute; left: 12px; top: 60px; z-index: 3; width: 330px; max-width: calc(100% - 24px);
+         max-height: calc(100% - 190px); overflow-y: auto; box-sizing: border-box; padding: 10px 12px 12px;
+         background: #fff; color: #222; border-radius: 12px; box-shadow: 0 4px 18px rgba(0,0,0,.18); font-size: 13px; }
+  #dir[hidden] { display: none; }
+  #dir .dir-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  #dir .dir-modes { display: flex; gap: 4px; flex: 1; }
+  #dir button { border: 0; border-radius: 8px; padding: 6px 9px; background: #eef2f6; color: #333; cursor: pointer; font: inherit; }
+  #dir button:hover { background: #e2e8ef; }
+  #dir .dir-modes button.on { background: #2f80ed; color: #fff; }
+  #dir .dir-x { background: none; font-size: 16px; padding: 2px 6px; }
+  #dir .dir-row { display: flex; align-items: baseline; gap: 6px; margin: 3px 0; }
+  #dir .dir-row .lbl { width: 34px; flex: 0 0 34px; color: #777; }
+  #dir .dir-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #dir .link { background: none !important; padding: 0 !important; color: #2f80ed !important; text-decoration: underline; font-size: 12px; }
+  #dirSummary { margin: 10px 0 6px; padding: 8px 10px; border-radius: 10px; background: #f3f6f9; }
+  #dirSummary:empty { display: none; }
+  #dirSummary .t { font-size: 22px; font-weight: 700; color: #1a7f37; }
+  #dirSummary .t.slow { color: #d9480f; }
+  #dirSummary .sub { color: #555; margin-top: 2px; }
+  #dirSummary .msg { color: #555; }
+  #dirSummary .err { color: #b42318; }
+  #dirSteps { list-style: none; margin: 0; padding: 0; }
+  #dirSteps li { display: flex; gap: 10px; padding: 7px 4px; border-top: 1px solid #eef1f4; cursor: pointer; border-radius: 6px; }
+  #dirSteps li:hover { background: #f3f6f9; }
+  #dirSteps .ic { width: 22px; flex: 0 0 22px; text-align: center; font-size: 16px; line-height: 18px; }
+  #dirSteps .m { flex: 1; line-height: 1.3; }
+  #dirSteps .d { color: #888; white-space: nowrap; font-size: 12px; }
+  #dir .dir-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; color: #888; font-size: 11px; }
+  .dest-pin { width: 18px; height: 18px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #e5484d;
+              border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .start-pin { width: 14px; height: 14px; border-radius: 50%; background: #1a7f37; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .ctx-pop button { border: 0; border-radius: 6px; padding: 6px 10px; background: #2f80ed; color: #fff; cursor: pointer; font: inherit; font-size: 13px; }
+  [data-theme=dark] #dir { background: #1f252c; color: #e6e9ec; box-shadow: 0 4px 18px rgba(0,0,0,.55); }
+  [data-theme=dark] #dir button { background: #2a323b; color: #e2e6ea; }
+  [data-theme=dark] #dir button:hover { background: #343d47; }
+  [data-theme=dark] #dir .dir-modes button.on { background: #2f80ed; color: #fff; }
+  [data-theme=dark] #dir .dir-x { background: none; }
+  [data-theme=dark] #dir .link { color: #5aa2ff !important; }
+  [data-theme=dark] #dirSummary { background: #161b21; }
+  [data-theme=dark] #dirSummary .t { color: #3fb950; }
+  [data-theme=dark] #dirSummary .t.slow { color: #ff8c42; }
+  [data-theme=dark] #dirSummary .sub, [data-theme=dark] #dirSummary .msg { color: #a7b1bb; }
+  [data-theme=dark] #dirSteps li { border-top-color: #2a323b; }
+  [data-theme=dark] #dirSteps li:hover { background: #262d35; }
   #ui button { border: 0; border-radius: 8px; padding: 8px 12px; background: #fff; color: #333;
                box-shadow: 0 1px 4px rgba(0,0,0,.15); cursor: pointer; font: inherit; }
   #ui button:hover { background: #f3f5f7; }
@@ -207,12 +254,30 @@
   </div>
   <button id="tilt">Toggle tilt-shift</button>
   <button id="theme" title="Theme: Auto follows your system setting">◐ Auto</button>
+  <button id="trafficBtn" title="Show live traffic and incidents (TomTom)" hidden>🚦 Traffic</button>
   <button id="pinMode" title="Click the map to drop pins (Esc to stop)">Drop pins</button>
   <button id="pinImport" title="Load pins from a .geojson (from Export pins) or GPX waypoints">Import pins</button>
   <input id="pinFile" type="file" accept=".geojson,.json,.gpx,application/geo+json,application/json,application/gpx+xml" hidden>
   <button id="pinExport" style="display:none">Export pins</button>
   <button id="pinClear" style="display:none">Clear pins</button>
   <span id="status" style="display:none"></span>
+</div>
+<div id="dir" hidden>
+  <div class="dir-head">
+    <div class="dir-modes">
+      <button data-mode="car" class="on">🚗 Drive</button>
+      <button data-mode="pedestrian">🚶 Walk</button>
+      <button data-mode="bicycle">🚲 Bike</button>
+    </div>
+    <button class="dir-x" id="dirClose" title="Close directions">✕</button>
+  </div>
+  <div class="dir-row"><span class="lbl">To</span><b id="dirTo"></b></div>
+  <div class="dir-row"><span class="lbl">From</span><span id="dirFrom">Your location</span>
+    <button class="link" id="dirPickStart" title="Click the map to choose where the route starts">pick on map</button>
+    <button class="link" id="dirUseMe" hidden>use my location</button></div>
+  <div id="dirSummary"></div>
+  <ol id="dirSteps"></ol>
+  <div class="dir-foot"><span>Routing &amp; traffic © TomTom</span><button id="dirRefresh" title="Recalculate with the latest traffic">↻ Refresh</button></div>
 </div>
 <div id="coords" title="Click to copy the view center">
   <div><b>View</b><span id="cView">–</span></div>
@@ -221,6 +286,8 @@
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<!-- Optional local settings (API keys). Missing file = traffic/directions turned off. -->
+<script src="config.js"></script>
 <script>
   // ---- CONFIG: default starting view ([lng, lat]) ----
   // Use "Set as start" on a search result to open somewhere else (saved only in your browser).
@@ -315,6 +382,7 @@
     meLngLat = { lng, lat };
     updateDistances();
     if (opts.fly) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 16), duration: 1500, essential: true });
+    onMeMoved(); // directions may be waiting for your location
   }
 
   // ---- "My location" button (bottom-right, like Google Maps) ----
@@ -491,7 +559,10 @@
       try { localStorage.setItem('clayMap.start', JSON.stringify([lng, lat])); btn.textContent = 'Saved ✓'; }
       catch { btn.textContent = 'Could not save'; }
     };
-    pop.append(title, document.createElement('br'), btn);
+    const dirBtn = document.createElement('button'); dirBtn.textContent = 'Directions'; dirBtn.className = 'dirb';
+    dirBtn.style.marginLeft = '6px';
+    dirBtn.onclick = () => { placeMarker.getPopup()?.remove(); openDirections({ lng, lat, name }); };
+    pop.append(title, document.createElement('br'), btn, dirBtn);
     placeMarker.setLngLat([lng, lat]).setPopup(new maplibregl.Popup({ offset: 14 }).setDOMContent(pop)).addTo(map);
     placeMarker.togglePopup();
   }
@@ -908,7 +979,9 @@
     copy.onclick = () => copyText(fmt(p.lat, p.lng), ok => { copy.textContent = ok ? 'Copied ✓' : 'Copy coords'; setTimeout(() => copy.textContent = 'Copy coords', 1500); });
     const del = mk('button', { className: 'del', textContent: 'Delete' });
     del.onclick = () => removePin(p.id);
-    row.append(copy, del);
+    const dirb = mk('button', { className: 'dirb', textContent: 'Directions', title: 'Route here from your location' });
+    dirb.onclick = () => { pinMarkers[p.id]?.getPopup().remove(); openDirections({ lng: p.lng, lat: p.lat, name: p.name }); };
+    row.append(dirb, copy, del);
     box.append(name, code, ctl, row);
     box._refresh = refresh;
     return box;
@@ -1308,6 +1381,238 @@
   savePins();
   updateDistances();
 
+  // =====================================================================
+  // ---- TomTom: live traffic layer + traffic-aware directions ----
+  // Needs window.CLAY_CONFIG.tomtomKey (config.js). Without it, these features stay hidden.
+  // =====================================================================
+  const TT_KEY = (window.CLAY_CONFIG && window.CLAY_CONFIG.tomtomKey) || '';
+  const TT = 'https://api.tomtom.com';
+
+  // ---- Traffic overlay (raster tiles painted on the ground, under the buildings) ----
+  const trafficBtn = document.getElementById('trafficBtn');
+  let trafficOn = false;
+  try { trafficOn = localStorage.getItem('clayMap.traffic') === '1'; } catch {}
+  trafficBtn.hidden = !TT_KEY;
+
+  function syncTraffic() {
+    trafficBtn.classList.toggle('on', trafficOn && !!TT_KEY);
+    if (!mapReady || !map.isStyleLoaded()) return;
+    for (const id of ['tt-incidents', 'tt-flow']) {
+      if (map.getLayer(id)) map.removeLayer(id);
+      if (map.getSource(id)) map.removeSource(id);
+    }
+    if (!trafficOn || !TT_KEY) return;
+    const dark = document.documentElement.dataset.theme === 'dark';
+    const tiles = (kind, style) => [`${TT}/traffic/map/4/tile/${kind}/${style}/{z}/{x}/{y}.png?key=${TT_KEY}&tileSize=512`];
+    const below = map.getLayer('route-casing') ? 'route-casing' : 'buildings'; // keep a drawn route on top
+    map.addSource('tt-flow', { type: 'raster', tileSize: 512, tiles: tiles('flow', dark ? 'relative0-dark' : 'relative0'),
+                               attribution: 'Traffic © TomTom' });
+    map.addLayer({ id: 'tt-flow', type: 'raster', source: 'tt-flow', paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0 } }, below);
+    map.addSource('tt-incidents', { type: 'raster', tileSize: 512, tiles: tiles('incidents', dark ? 'night' : 's3') });
+    map.addLayer({ id: 'tt-incidents', type: 'raster', source: 'tt-incidents', paint: { 'raster-fade-duration': 0 } }, 'buildings');
+  }
+  trafficBtn.onclick = () => {
+    trafficOn = !trafficOn;
+    try { localStorage.setItem('clayMap.traffic', trafficOn ? '1' : '0'); } catch {}
+    syncTraffic();
+  };
+  map.on('load', syncTraffic);
+  // Live traffic changes: refresh the overlay every 2 minutes while it's on
+  setInterval(() => { if (trafficOn) syncTraffic(); }, 120000);
+
+  // ---- Directions ----
+  const dirEl = document.getElementById('dir'), dirTo = document.getElementById('dirTo'),
+        dirFrom = document.getElementById('dirFrom'), dirSummary = document.getElementById('dirSummary'),
+        dirSteps = document.getElementById('dirSteps'), dirPickStart = document.getElementById('dirPickStart'),
+        dirUseMe = document.getElementById('dirUseMe');
+  const dir = { dest: null, origin: null, mode: 'car', route: null, waitingForMe: false, seq: 0 };
+  let destMarker = null, startMarker = null;
+
+  // Called by placeMe(): the first fix of your location starts a route that was waiting for it
+  function onMeMoved() {
+    if (dir.dest && !dir.origin && dir.waitingForMe) { dir.waitingForMe = false; computeRoute(); }
+  }
+
+  function openDirections(dest) {
+    if (!TT_KEY) return setStatus('Directions need a TomTom key in config.js', true, 5000);
+    dir.dest = dest;
+    dirTo.textContent = dest.name || fmt(dest.lat, dest.lng);
+    dirTo.title = dirTo.textContent;
+    dirEl.hidden = false;
+    if (!destMarker) {
+      const el = document.createElement('div'); el.className = 'dest-pin';
+      destMarker = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -2] });
+    }
+    destMarker.setLngLat([dest.lng, dest.lat]).addTo(map);
+    computeRoute();
+  }
+
+  function closeDirections() {
+    dir.dest = null; dir.origin = null; dir.route = null; dir.waitingForMe = false; dir.seq++;
+    dirEl.hidden = true;
+    destMarker?.remove(); startMarker?.remove();
+    clearRouteLayers();
+    syncFromLabel();
+  }
+
+  function syncFromLabel() {
+    dirFrom.textContent = dir.origin ? (dir.origin.name || 'Picked point') : 'Your location';
+    dirUseMe.hidden = !dir.origin;
+  }
+
+  function summaryMsg(html) { dirSummary.innerHTML = html; dirSteps.innerHTML = ''; }
+
+  async function computeRoute() {
+    if (!dir.dest) return;
+    syncFromLabel();
+    const from = dir.origin || meLngLat;
+    if (!from) {
+      // No start yet: find the user (the my-location button flow), or let them pick one
+      dir.waitingForMe = true;
+      summaryMsg('<div class="msg">Finding your location… or <b>pick on map</b> to choose a start.</div>');
+      if (watchId === null && navigator.geolocation) { following = false; startWatch(); setLocState('searching'); }
+      return;
+    }
+    const seq = ++dir.seq;
+    summaryMsg('<div class="msg">Finding the best route…</div>');
+    const d = dir.dest;
+    const params = new URLSearchParams({
+      key: TT_KEY, travelMode: dir.mode, routeType: 'fastest', traffic: dir.mode === 'car' ? 'true' : 'false',
+      instructionsType: 'text', language: 'en-GB', sectionType: 'traffic', computeTravelTimeFor: 'all'
+    });
+    let data;
+    try {
+      const res = await fetch(`${TT}/routing/1/calculateRoute/${from.lat},${from.lng}:${d.lat},${d.lng}/json?${params}`);
+      if (seq !== dir.seq) return; // a newer request replaced this one
+      if (!res.ok) {
+        const why = res.status === 403 ? 'the TomTom key was refused (check its allowed websites)'
+                  : res.status === 429 ? 'the free daily limit was reached; try again later'
+                  : res.status === 400 ? 'no route between these points'
+                  : `TomTom returned error ${res.status}`;
+        return summaryMsg(`<div class="err">Couldn't get a route: ${why}.</div>`);
+      }
+      data = await res.json();
+    } catch {
+      if (seq === dir.seq) summaryMsg('<div class="err">Couldn\'t reach TomTom. Check your connection and try ↻ Refresh.</div>');
+      return;
+    }
+    if (seq !== dir.seq) return;
+    const route = data.routes && data.routes[0];
+    if (!route) return summaryMsg('<div class="err">No route found.</div>');
+    dir.route = route;
+    drawRoute(route, from);
+    renderSummary(route);
+    renderSteps(route);
+  }
+
+  // ---- Route drawing: blue line on the ground (under buildings), jams colored by severity ----
+  const JAM_COLORS = ['#f5c542', '#f5a524', '#f97316', '#e5484d', '#8b1e1e']; // magnitudeOfDelay 0..4
+  function clearRouteLayers() {
+    for (const id of ['route-traffic', 'route-line', 'route-casing']) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of ['route', 'route-traffic']) if (map.getSource(id)) map.removeSource(id);
+  }
+  function drawRoute(route, from) {
+    const coords = route.legs.flatMap(l => l.points.map(pt => [pt.longitude, pt.latitude]));
+    const jams = (route.sections || []).filter(s => s.sectionType === 'TRAFFIC').map(s => ({
+      type: 'Feature', properties: { color: JAM_COLORS[Math.min(4, Math.max(0, s.magnitudeOfDelay ?? 1))] },
+      geometry: { type: 'LineString', coordinates: coords.slice(s.startPointIndex, s.endPointIndex + 1) } }));
+    clearRouteLayers();
+    const dark = document.documentElement.dataset.theme === 'dark';
+    map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } });
+    map.addSource('route-traffic', { type: 'geojson', data: { type: 'FeatureCollection', features: jams } });
+    const w = (a, b) => ['interpolate', ['exponential', 1.5], ['zoom'], 11, a, 18, b];
+    map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' },
+                   paint: { 'line-color': dark ? '#0b2a52' : '#ffffff', 'line-width': w(5, 22) } }, 'buildings');
+    map.addLayer({ id: 'route-line', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' },
+                   paint: { 'line-color': '#2f80ed', 'line-width': w(3, 14) } }, 'buildings');
+    map.addLayer({ id: 'route-traffic', type: 'line', source: 'route-traffic', layout: { 'line-cap': 'round', 'line-join': 'round' },
+                   paint: { 'line-color': ['get', 'color'], 'line-width': w(3, 14) } }, 'buildings');
+    // Custom start marker (only when not starting from your own position)
+    if (dir.origin) {
+      if (!startMarker) { const el = document.createElement('div'); el.className = 'start-pin'; startMarker = new maplibregl.Marker({ element: el }); }
+      startMarker.setLngLat([from.lng, from.lat]).addTo(map);
+    } else startMarker?.remove();
+    // Frame the whole route, leaving room for the panel on wide screens
+    const b = new maplibregl.LngLatBounds();
+    coords.forEach(c => b.extend(c));
+    const wide = innerWidth > 700;
+    map.fitBounds(b, { padding: { top: 90, bottom: 60, left: wide ? 370 : 40, right: 60 }, maxZoom: 16.5,
+                       pitch: Math.min(map.getPitch(), 50), duration: 1400 });
+  }
+
+  function fmtDuration(s) {
+    const m = Math.round(s / 60);
+    return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+  }
+  function renderSummary(route) {
+    const s = route.summary;
+    const delay = dir.mode === 'car' ? (s.trafficDelayInSeconds || 0) : 0;
+    const arrive = new Date(s.arrivalTime || Date.now() + s.travelTimeInSeconds * 1000)
+      .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const slow = delay >= 300;
+    const delayTxt = dir.mode !== 'car' ? '' : delay >= 60 ? ` · <b>+${fmtDuration(delay)}</b> traffic` : ' · no traffic delays';
+    dirSummary.innerHTML = `<div class="t${slow ? ' slow' : ''}">${fmtDuration(s.travelTimeInSeconds)}</div>
+      <div class="sub">${fmtDist(s.lengthInMeters)} · arrive ${arrive}${delayTxt}</div>`;
+  }
+
+  const TURN_ICONS = {
+    DEPART: '●', ARRIVE: '⚑', ARRIVE_LEFT: '⚑', ARRIVE_RIGHT: '⚑', STRAIGHT: '↑', KEEP_LEFT: '↖', KEEP_RIGHT: '↗',
+    BEAR_LEFT: '↖', BEAR_RIGHT: '↗', TURN_LEFT: '←', TURN_RIGHT: '→', SHARP_LEFT: '↙', SHARP_RIGHT: '↘',
+    MAKE_UTURN: '↶', ROUNDABOUT_CROSS: '⟳', ROUNDABOUT_LEFT: '⟲', ROUNDABOUT_RIGHT: '⟳', ROUNDABOUT_BACK: '⟲',
+    ENTER_MOTORWAY: '↗', ENTER_FREEWAY: '↗', ENTER_HIGHWAY: '↗', TAKE_EXIT: '↘', MOTORWAY_CHANGE_LEFT: '↖',
+    MOTORWAY_CHANGE_RIGHT: '↗', TAKE_FERRY: '⛴', SWITCH_PARALLEL_ROAD: '⇄', SWITCH_MAIN_ROAD: '⇄'
+  };
+  function renderSteps(route) {
+    const ins = (route.guidance && route.guidance.instructions) || [];
+    dirSteps.innerHTML = '';
+    ins.forEach((it, i) => {
+      const next = ins[i + 1];
+      const legLen = next ? next.routeOffsetInMeters - it.routeOffsetInMeters : 0;
+      const li = mk('li');
+      li.append(mk('span', { className: 'ic', textContent: TURN_ICONS[it.maneuver] || '↑' }),
+                mk('span', { className: 'm', textContent: it.message || it.maneuver }),
+                mk('span', { className: 'd', textContent: legLen > 0 ? fmtDist(legLen) : '' }));
+      li.onclick = () => map.flyTo({ center: [it.point.longitude, it.point.latitude], zoom: 17.5,
+                                     pitch: Math.max(map.getPitch(), 55), duration: 1200, essential: true });
+      dirSteps.append(li);
+    });
+  }
+
+  // Panel controls
+  document.getElementById('dirClose').onclick = closeDirections;
+  document.getElementById('dirRefresh').onclick = () => computeRoute();
+  dirEl.querySelectorAll('.dir-modes button').forEach(b => b.onclick = () => {
+    dir.mode = b.dataset.mode;
+    dirEl.querySelectorAll('.dir-modes button').forEach(x => x.classList.toggle('on', x === b));
+    computeRoute();
+  });
+  dirPickStart.onclick = () => {
+    setStatus('Click the map where the route should start', false, 6000);
+    map.getCanvas().style.cursor = 'crosshair';
+    placingMe = true; // reuse: stops pin-dropping from also firing on this click
+    map.once('click', e => {
+      placingMe = false;
+      map.getCanvas().style.cursor = pinMode ? 'crosshair' : '';
+      dir.origin = { lng: e.lngLat.lng, lat: e.lngLat.lat, name: 'Picked point' };
+      setStatus('');
+      computeRoute();
+    });
+  };
+  dirUseMe.onclick = () => { dir.origin = null; computeRoute(); };
+
+  // Right-click empty map: "Directions to here"
+  let ctxPopup = null;
+  map.on('contextmenu', e => {
+    if (!TT_KEY || e.originalEvent?.target?.closest?.('.maplibregl-marker, .maplibregl-popup')) return;
+    ctxPopup?.remove();
+    const box = mk('div', { className: 'ctx-pop' });
+    const b = mk('button', { textContent: 'Directions to here' });
+    const at = { lng: e.lngLat.lng, lat: e.lngLat.lat };
+    b.onclick = () => { ctxPopup.remove(); openDirections({ ...at, name: fmt(at.lat, at.lng) }); };
+    box.append(b);
+    ctxPopup = new maplibregl.Popup({ closeButton: false, offset: 6 }).setLngLat(e.lngLat).setDOMContent(box).addTo(map);
+  });
+
   let tiltOn = true;
   document.getElementById('tilt').onclick = () => {
     tiltOn = !tiltOn;
@@ -1331,6 +1636,8 @@
     map.setPaintProperty('buildings', 'fill-extrusion-color', T.building);
     map.setLight(lightOf(T));
     map.setSky(skyOf(T));
+    syncTraffic(); // traffic tiles have separate light/dark styles
+    if (map.getLayer('route-casing')) map.setPaintProperty('route-casing', 'line-color', name === 'dark' ? '#0b2a52' : '#ffffff');
   }
   themeBtn.onclick = () => {
     themePref = { auto: 'light', light: 'dark', dark: 'auto' }[themePref] || 'auto';
