@@ -1,0 +1,1345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clay Map</title>
+<script>
+  // Pick the theme before anything paints (no light flash in dark mode)
+  (function () {
+    var pref = 'auto';
+    try { pref = localStorage.getItem('clayMap.theme') || 'auto'; } catch (e) {}
+    var dark = pref === 'dark' || (pref === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  })();
+</script>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #eef1f4; font-family: system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+
+  /* Tilt-shift: blur the top and bottom bands of the screen */
+  .tilt { position: absolute; left: 0; right: 0; pointer-events: none;
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .tilt.top { top: 0; height: 28%;
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 0%, transparent 100%); }
+  .tilt.bottom { bottom: 0; height: 22%;
+    -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 100%);
+            mask-image: linear-gradient(to top, #000 0%, transparent 100%); }
+
+  #ui { position: absolute; top: 12px; left: 12px; right: 56px; z-index: 3; display: flex; gap: 8px;
+        flex-wrap: wrap; align-items: flex-start; }
+
+  #search { position: relative; width: 300px; max-width: 100%; }
+  #search input { box-sizing: border-box; width: 100%; border: 0; border-radius: 8px; padding: 9px 12px;
+                  font: inherit; font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.15); outline: none; }
+  #search input:focus { box-shadow: 0 0 0 2px #2f80ed55, 0 1px 4px rgba(0,0,0,.15); }
+  #results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px 0;
+             list-style: none; background: #fff; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.15);
+             max-height: 300px; overflow-y: auto; }
+  #results:empty { display: none; }
+  #results li { padding: 8px 12px; cursor: pointer; font-size: 14px; line-height: 1.3; }
+  #results li:hover, #results li.active { background: #f0f4f8; }
+  #results li small { display: block; color: #777; font-size: 12px; }
+  #results li.empty { color: #777; cursor: default; }
+  .place-pin { width: 14px; height: 14px; border-radius: 50%; background: #e5484d; border: 3px solid #fff;
+               box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+  .pin-pop button { margin-top: 6px; border: 0; border-radius: 6px; padding: 5px 8px; background: #2f80ed;
+                    color: #fff; cursor: pointer; font: inherit; font-size: 12px; }
+  .pin-pop { font-family: system-ui, sans-serif; font-size: 13px; }
+
+  #ui button.on { background: #2f80ed; color: #fff; }
+  #ui button.on:hover { background: #2a73d6; }
+
+  /* Live coordinates readout */
+  #coords { position: absolute; left: 12px; bottom: 12px; z-index: 3; background: rgba(255,255,255,.94);
+            border-radius: 8px; padding: 8px 10px; font: 12px/1.5 ui-monospace, Consolas, monospace; color: #333;
+            box-shadow: 0 1px 4px rgba(0,0,0,.15); cursor: pointer; user-select: none; }
+  #coords b { font-family: system-ui, sans-serif; font-weight: 600; color: #666; display: inline-block; width: 52px; }
+  #coords .hint { font-family: system-ui, sans-serif; color: #888; font-size: 11px; }
+
+  /* User pins */
+  .user-pin { position: relative; cursor: grab; }
+  .user-pin svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+  .user-pin .num { position: absolute; left: 0; right: 0; text-align: center; color: #fff;
+                   font-family: system-ui, sans-serif; font-weight: 600; pointer-events: none; }
+
+  /* Target-lock marker */
+  .tgt { position: relative; cursor: grab; }
+  .tgt svg { display: block; width: 100%; height: 100%; overflow: visible;
+             filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+  .tgt .ticks, .tgt .halo { transform-box: fill-box; transform-origin: center; }
+  .tgt .ticks { animation: tgt-spin 16s linear infinite; }
+  .tgt .halo { animation: tgt-pulse 2.4s ease-in-out infinite; }
+  .tgt .lock { stroke-dashoffset: 100; animation: tgt-lock 1.1s cubic-bezier(.3,.7,.3,1) .1s forwards; }
+  .tgt.noanim .ticks, .tgt.noanim .halo { animation: none; }
+  @keyframes tgt-spin { to { transform: rotate(360deg); } }
+  @keyframes tgt-pulse { 0%, 100% { opacity: .12; transform: scale(1); } 50% { opacity: .38; transform: scale(1.07); } }
+  @keyframes tgt-lock { to { stroke-dashoffset: 0; } }
+  .tgt .lbl { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 5px;
+              text-align: center; white-space: nowrap; pointer-events: none; font-family: system-ui, sans-serif;
+              color: #1c2630; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff; }
+  .tgt .lbl .nm { font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+  .tgt .lbl .dist { display: block; font-size: 11px; color: #4a5866; }
+
+  .pin-edit { font-family: system-ui, sans-serif; font-size: 12px; min-width: 220px; }
+  .pin-edit .ctl { display: grid; grid-template-columns: 54px 1fr; gap: 6px 8px; align-items: center; margin-bottom: 8px; }
+  .pin-edit .ctl > span { color: #667; }
+  .pin-edit .ctl .hide { display: none; }
+  .pin-edit select, .pin-edit .ctl input[type=text] { width: 100%; box-sizing: border-box; border: 1px solid #d0d6dc;
+                    border-radius: 6px; padding: 4px 6px; font: inherit; margin: 0; }
+  .pin-edit .sz { display: flex; align-items: center; gap: 6px; }
+  .pin-edit .sz input { flex: 1; min-width: 0; margin: 0; }
+  .pin-edit .sz output { width: 46px; text-align: right; color: #555; white-space: nowrap; }
+  .hit { border-radius: 50%; cursor: pointer; }
+  .tgt, .user-pin { cursor: pointer !important; }
+  /* Picked up with click-and-hold */
+  .grabbing .tgt, .grabbing .user-pin { transform: scale(1.12); transition: transform .15s; }
+  .grabbing .hit { box-shadow: 0 0 0 3px rgba(124,58,237,.55), 0 0 18px rgba(124,58,237,.35); }
+  body.grabbing, body.grabbing * { cursor: grabbing !important; }
+  .hit:hover { box-shadow: 0 0 0 2px rgba(255,255,255,.6) inset; }
+
+  /* Lifted pin: hovers above a blocking building, tethered to its spot on the ground */
+  /* (MapLibre sets an inline opacity on marker elements, so hide the children, not .lift itself) */
+  .lift { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+  .lift-head, .lift-stem { transition: opacity .3s; }
+  .lift.off .lift-head, .lift.off .lift-stem { opacity: 0; }
+  .lift.hard-off { visibility: hidden; }
+  .lift-head { pointer-events: auto; cursor: pointer; }
+  .lift.off .lift-head { pointer-events: none; }
+  .lift-head .tgt .lbl { top: 50%; left: 100%; transform: translateY(-50%); margin: 0 0 0 6px; text-align: left; }
+  .lift-stem { position: relative; width: 2px; opacity: .75;
+               background: repeating-linear-gradient(to bottom, currentColor 0 4px, transparent 4px 7px); }
+  .lift-stem::after { content: ''; position: absolute; bottom: -3px; left: -2px; width: 6px; height: 6px;
+                      border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px rgba(255,255,255,.8); }
+  .lift.tween .lift-stem { transition: height .4s cubic-bezier(.3,.7,.3,1); }
+  .pin-edit input[type=color] { width: 44px; height: 24px; padding: 0; border: 1px solid #d0d6dc; border-radius: 4px; background: none; }
+  .pin-edit .img { display: flex; gap: 6px; }
+  .pin-edit .img button { flex: 0 0 auto; background: #eef2f6; color: #333; }
+  .pin-edit input { width: 100%; box-sizing: border-box; border: 1px solid #d0d6dc; border-radius: 6px;
+                    padding: 5px 7px; font: inherit; font-size: 13px; margin-bottom: 6px; }
+  .pin-edit code { display: block; color: #555; margin-bottom: 6px; }
+  .pin-edit .row { display: flex; gap: 6px; }
+  .pin-edit button { flex: 1; border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer; font: inherit; }
+  .pin-edit .copy { background: #eef2f6; color: #333; }
+  .pin-edit .del { background: #fdecec; color: #b42318; }
+  #ui button { border: 0; border-radius: 8px; padding: 8px 12px; background: #fff; color: #333;
+               box-shadow: 0 1px 4px rgba(0,0,0,.15); cursor: pointer; font: inherit; }
+  #ui button:hover { background: #f3f5f7; }
+  #ui button:disabled { opacity: .6; cursor: wait; }
+  #status { align-self: center; background: rgba(255,255,255,.92); border-radius: 8px; padding: 6px 10px;
+            font-size: 13px; box-shadow: 0 1px 4px rgba(0,0,0,.12); max-width: 60vw; }
+  /* Your position */
+  .me-dot { width: 22px; height: 22px; box-sizing: border-box; border-radius: 50%; background: #2f80ed;
+            border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(47,128,237,.25), 0 1px 4px rgba(0,0,0,.3);
+            pointer-events: none; }
+
+  /* My-location button */
+  .locate-btn { display: flex !important; align-items: center; justify-content: center; color: #555; }
+  .locate-btn .core { opacity: 0; }
+  .locate-btn[data-state=active] .core { opacity: 1; }
+  .locate-btn[data-state=following] { color: #2f80ed; }
+  .locate-btn[data-state=following] .core { opacity: 1; }
+  .locate-btn[data-state=searching] { color: #2f80ed; animation: loc-pulse 1s ease-in-out infinite; }
+  @keyframes loc-pulse { 50% { opacity: .35; } }
+  [data-theme=dark] .locate-btn { color: #cfd6dd; }
+  [data-theme=dark] .locate-btn[data-state=following], [data-theme=dark] .locate-btn[data-state=searching] { color: #5aa2ff; }
+  #status.err { color: #b42318; }
+
+  /* ===================== Dark theme ===================== */
+  html[data-theme=dark] { color-scheme: dark; }
+  html[data-theme=dark] body { background: #14181d; color: #e2e6ea; }
+  [data-theme=dark] #ui button { background: #1f252c; color: #e2e6ea; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  [data-theme=dark] #ui button:hover { background: #2a323b; }
+  [data-theme=dark] #ui button.on { background: #2f80ed; color: #fff; }
+  [data-theme=dark] #search input { background: #1f252c; color: #e6e9ec; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  [data-theme=dark] #search input::placeholder { color: #7f8a95; }
+  [data-theme=dark] #results { background: #1f252c; color: #e6e9ec; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  [data-theme=dark] #results li:hover, [data-theme=dark] #results li.active { background: #2a323b; }
+  [data-theme=dark] #results li small, [data-theme=dark] #results li.empty { color: #8a949e; }
+  [data-theme=dark] #coords { background: rgba(31,37,44,.94); color: #d5dade; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  [data-theme=dark] #coords b { color: #9aa4ae; }
+  [data-theme=dark] #coords .hint { color: #7d8791; }
+  [data-theme=dark] #status { background: rgba(31,37,44,.94); color: #e2e6ea; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  [data-theme=dark] #status.err { color: #ff8a80; }
+  /* pin labels: light text with a dark halo */
+  [data-theme=dark] .tgt .lbl { color: #eef1f4; text-shadow: 0 0 3px #0d1116, 0 0 3px #0d1116, 0 0 2px #0d1116; }
+  [data-theme=dark] .tgt .lbl .dist { color: #a7b1bb; }
+  [data-theme=dark] .lift-stem::after { box-shadow: 0 0 0 2px rgba(13,17,22,.8); }
+  /* popups */
+  [data-theme=dark] .maplibregl-popup-content { background: #1f252c; color: #e6e9ec; box-shadow: 0 4px 18px rgba(0,0,0,.55); }
+  [data-theme=dark] .maplibregl-popup-close-button { color: #c4ccd4; }
+  [data-theme=dark] .maplibregl-popup-anchor-top .maplibregl-popup-tip,
+  [data-theme=dark] .maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+  [data-theme=dark] .maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: #1f252c; }
+  [data-theme=dark] .maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+  [data-theme=dark] .maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+  [data-theme=dark] .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: #1f252c; }
+  [data-theme=dark] .maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: #1f252c; }
+  [data-theme=dark] .maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: #1f252c; }
+  [data-theme=dark] .pin-edit .ctl > span { color: #9aa4ae; }
+  [data-theme=dark] .pin-edit input, [data-theme=dark] .pin-edit select,
+  [data-theme=dark] .pin-edit .ctl input[type=text] { background: #151a20; color: #e6e9ec; border-color: #3a434d; }
+  [data-theme=dark] .pin-edit input[type=color] { border-color: #3a434d; background: none; }
+  [data-theme=dark] .pin-edit code, [data-theme=dark] .pin-edit .sz output { color: #a7b1bb; }
+  [data-theme=dark] .pin-edit .copy, [data-theme=dark] .pin-edit .img button,
+  [data-theme=dark] .pin-edit .sz button { background: #2a323b !important; color: #e2e6ea !important; }
+  [data-theme=dark] .pin-edit .del { background: #3a1f22; color: #ff8a80; }
+  /* map controls & attribution */
+  [data-theme=dark] .maplibregl-ctrl-group { background: #1f252c; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+  [data-theme=dark] .maplibregl-ctrl-group button + button { border-top-color: #2f3740; }
+  [data-theme=dark] .maplibregl-ctrl-group button:hover { background-color: #2a323b; }
+  [data-theme=dark] .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(.9); }
+  [data-theme=dark] .maplibregl-ctrl-attrib { background: rgba(31,37,44,.85); color: #9aa4ae; }
+  [data-theme=dark] .maplibregl-ctrl-attrib a { color: #b8c1ca; }
+  [data-theme=dark] .maplibregl-ctrl-attrib-button { filter: invert(.9); }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="tilt top"></div>
+<div class="tilt bottom"></div>
+<div id="ui">
+  <div id="search">
+    <input id="q" type="search" placeholder="Search places (e.g. Burj Khalifa)" autocomplete="off">
+    <ul id="results"></ul>
+  </div>
+  <button id="tilt">Toggle tilt-shift</button>
+  <button id="theme" title="Theme: Auto follows your system setting">◐ Auto</button>
+  <button id="pinMode" title="Click the map to drop pins (Esc to stop)">Drop pins</button>
+  <button id="pinImport" title="Load pins from a .geojson (from Export pins) or GPX waypoints">Import pins</button>
+  <input id="pinFile" type="file" accept=".geojson,.json,.gpx,application/geo+json,application/json,application/gpx+xml" hidden>
+  <button id="pinExport" style="display:none">Export pins</button>
+  <button id="pinClear" style="display:none">Clear pins</button>
+  <span id="status" style="display:none"></span>
+</div>
+<div id="coords" title="Click to copy the view center">
+  <div><b>View</b><span id="cView">–</span></div>
+  <div><b>Cursor</b><span id="cCursor">–</span></div>
+  <div><b>Zoom</b><span id="cZoom">–</span> <span class="hint" id="cHint">· click to copy</span></div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<script>
+  // ---- CONFIG: default starting view ([lng, lat]) ----
+  // Use "Set as start" on a search result to open somewhere else (saved only in your browser).
+  const DEFAULT_CENTER = [55.2744, 25.1972]; // Downtown Dubai
+  // A start point saved with "Set as start" (per browser) overrides the default
+  let CENTER = DEFAULT_CENTER;
+  try {
+    const saved = JSON.parse(localStorage.getItem('clayMap.start'));
+    if (Array.isArray(saved) && saved.length === 2) CENTER = saved;
+  } catch {}
+  const ZOOM = 15.3, PITCH = 60, BEARING = -20;
+
+  // ---- Themes: map palettes (UI colors live in the CSS under [data-theme=dark]) ----
+  const MAP_THEMES = {
+    light: { land: '#f1f3f5', water: '#c9d3dc', park: '#e9edf0', road: '#e2e6ea', building: '#ffffff',
+             light: { color: '#ffffff', intensity: 0.35 }, sky: '#f4f6f8',
+             label: { fg: '#1c2630', sub: '#4a5866', halo: 'rgba(255,255,255,.95)' } },
+    dark:  { land: '#1a1f25', water: '#0d131a', park: '#1c232a', road: '#2b333c', building: '#454e59',
+             light: { color: '#c9d6ea', intensity: 0.45 }, sky: '#11151a',
+             label: { fg: '#eef1f4', sub: '#a7b1bb', halo: 'rgba(13,17,22,.95)' } }
+  };
+  const THEME_KEY = 'clayMap.theme';
+  const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+  let themePref = 'auto';
+  try { themePref = localStorage.getItem(THEME_KEY) || 'auto'; } catch {}
+  const effectiveTheme = () => themePref === 'auto' ? (darkQuery.matches ? 'dark' : 'light') : themePref;
+  let T = MAP_THEMES[effectiveTheme()];
+  const skyOf = t => ({ 'sky-color': t.sky, 'horizon-color': t.sky, 'fog-color': t.sky,
+                        'sky-horizon-blend': 0.6, 'horizon-fog-blend': 0.8, 'fog-ground-blend': 0.3 });
+  const lightOf = t => ({ anchor: 'viewport', color: t.light.color, intensity: t.light.intensity, position: [1.4, 210, 35] });
+
+  const style = {
+    version: 8,
+    sources: { omt: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+    light: lightOf(T),
+    sky: skyOf(T),
+    layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': T.land } },
+      { id: 'water', type: 'fill', source: 'omt', 'source-layer': 'water',
+        paint: { 'fill-color': T.water } },
+      { id: 'park', type: 'fill', source: 'omt', 'source-layer': 'park',
+        paint: { 'fill-color': T.park } },
+      { id: 'roads', type: 'line', source: 'omt', 'source-layer': 'transportation',
+        filter: ['!', ['in', ['get', 'class'], ['literal', ['rail', 'transit', 'ferry']]]],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': T.road,
+          'line-width': ['interpolate', ['exponential', 1.5], ['zoom'], 12, 0.6, 16, 6, 19, 24]
+        } },
+      { id: 'buildings', type: 'fill-extrusion', source: 'omt', 'source-layer': 'building',
+        minzoom: 13,
+        paint: {
+          'fill-extrusion-color': T.building,
+          'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 8],
+          'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+          'fill-extrusion-vertical-gradient': true,
+          'fill-extrusion-opacity': 1
+        } }
+    ]
+  };
+
+  const map = new maplibregl.Map({
+    container: 'map', style, center: CENTER, zoom: ZOOM, pitch: PITCH, bearing: BEARING,
+    maxPitch: 75, attributionControl: { compact: true }
+  });
+  new ResizeObserver(() => map.resize()).observe(document.getElementById('map'));
+  // Put the tilt-shift blur right above the map canvas, so it blurs the city
+  // but pins, markers and popups (added later) stay sharp on top of it
+  map.getCanvas().after(...document.querySelectorAll('.tilt'));
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+
+  const statusEl = document.getElementById('status');
+  let meMarker = null, meLngLat = null;
+  let statusTimer = null;
+  function setStatus(msg, isError, clearAfterMs) {
+    clearTimeout(statusTimer);
+    statusEl.textContent = msg;
+    statusEl.classList.toggle('err', !!isError);
+    statusEl.style.display = msg ? '' : 'none';
+    if (msg && clearAfterMs) statusTimer = setTimeout(() => setStatus(''), clearAfterMs);
+  }
+
+  // ---- Your position: blue dot (drawn on top of the map, so buildings never hide it) ----
+  function placeMe(lng, lat, opts = {}) {
+    if (!meMarker) {
+      const el = document.createElement('div');
+      el.className = 'me-dot';
+      meMarker = new maplibregl.Marker({ element: el, anchor: 'center' });
+    }
+    meMarker.setLngLat([lng, lat]);
+    if (!meLngLat) meMarker.addTo(map); // first time we know where you are
+    meLngLat = { lng, lat };
+    updateDistances();
+    if (opts.fly) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 16), duration: 1500, essential: true });
+  }
+
+  // ---- "My location" button (bottom-right, like Google Maps) ----
+  // Click: find you, center the map and follow you as you move. Dragging the map stops following;
+  // click again to re-center. States: '' idle, 'searching', 'active' (shown, not followed), 'following'.
+  let watchId = null, following = false, gotFix = false, locBtn = null;
+  const setLocState = s => { if (locBtn) { locBtn.dataset.state = s; locBtn.title = {
+    '': 'Show my location', searching: 'Finding your location…',
+    active: 'Center on my location', following: 'Following your location (drag the map to stop)' }[s]; } };
+
+  class LocateControl {
+    onAdd() {
+      const div = document.createElement('div');
+      div.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      locBtn = document.createElement('button');
+      locBtn.type = 'button';
+      locBtn.className = 'locate-btn';
+      locBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">' +
+        '<circle class="core" cx="12" cy="12" r="3.6" fill="currentColor"/>' +
+        '<circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/>' +
+        '<path d="M12 1.5v3.2M12 19.3v3.2M1.5 12h3.2M19.3 12h3.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+      locBtn.onclick = onLocateClick;
+      div.append(locBtn);
+      setLocState('');
+      return div;
+    }
+    onRemove() {}
+  }
+  map.addControl(new LocateControl(), 'bottom-right');
+
+  function centerOnMe(fly) {
+    if (!meLngLat) return;
+    const center = [meLngLat.lng, meLngLat.lat];
+    if (fly) map.flyTo({ center, zoom: Math.max(map.getZoom(), 16), duration: 1500, essential: true });
+    else map.easeTo({ center, duration: 600 });
+  }
+
+  function onLocateClick() {
+    if (!navigator.geolocation) {
+      setStatus('Geolocation not supported. Click the map to place yourself.', true);
+      return enableClickToPlace();
+    }
+    following = true;
+    if (meLngLat) { centerOnMe(true); setLocState(watchId === null ? 'searching' : 'following'); }
+    else setLocState('searching');
+    if (watchId === null) startWatch();
+  }
+
+  const GEO_ERRORS = {
+    1: 'Location permission denied (lock icon in the address bar to allow).',
+    2: 'Position unavailable.',
+    3: 'Timed out getting your location.'
+  };
+  function startWatch() {
+    gotFix = false;
+    watchId = navigator.geolocation.watchPosition(pos => {
+      const { longitude: lng, latitude: lat, accuracy } = pos.coords;
+      const first = !gotFix;
+      gotFix = true;
+      placeMe(lng, lat);
+      if (first) setStatus(`Located you (±${Math.round(accuracy)} m)`, false, 3000);
+      if (following) { centerOnMe(first); setLocState('following'); }
+      else setLocState('active');
+    }, err => {
+      if (gotFix && err.code !== 1) return; // brief hiccup while tracking: keep the last position
+      stopWatch();
+      following = false;
+      setLocState(meLngLat ? 'active' : '');
+      setStatus((GEO_ERRORS[err.code] || 'Could not get your location.') + ' Click the map to place yourself.', true);
+      enableClickToPlace();
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+  }
+  function stopWatch() {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+  // Panning the map yourself stops following (zooming/rotating keeps it, like Google Maps)
+  map.on('dragstart', () => { if (following) { following = false; setLocState(meLngLat ? 'active' : ''); } });
+
+  // Fallback: next click on the map sets your position manually
+  let placingMe = false;
+  function enableClickToPlace() {
+    placingMe = true;
+    map.getCanvas().style.cursor = 'crosshair';
+    map.once('click', e => {
+      placingMe = false;
+      map.getCanvas().style.cursor = pinMode ? 'crosshair' : '';
+      placeMe(e.lngLat.lng, e.lngLat.lat, { fly: true });
+      setLocState('active');
+      setStatus('Placed you manually', false, 3000);
+    });
+  }
+
+  // ---- Search (Photon geocoder, OpenStreetMap data, no key) ----
+  const qEl = document.getElementById('q');
+  const resEl = document.getElementById('results');
+  let results = [], activeIdx = -1, searchTimer = null, searchSeq = 0, placeMarker = null;
+
+  function describe(p) {
+    const name = p.name || p.street || 'Unnamed place';
+    const rest = [p.street && p.name ? p.street : null, p.district, p.city, p.state, p.country]
+      .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i && v !== name);
+    return { name, sub: rest.join(', ') };
+  }
+
+  function renderResults() {
+    resEl.innerHTML = '';
+    if (results === null) {
+      const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'No results';
+      return resEl.appendChild(li);
+    }
+    results.forEach((f, i) => {
+      const { name, sub } = describe(f.properties);
+      const li = document.createElement('li');
+      if (i === activeIdx) li.className = 'active';
+      li.textContent = name;
+      if (sub) { const s = document.createElement('small'); s.textContent = sub; li.appendChild(s); }
+      li.onmousedown = e => { e.preventDefault(); choose(i); };
+      resEl.appendChild(li);
+    });
+  }
+
+  async function runSearch(q) {
+    const seq = ++searchSeq;
+    const c = map.getCenter();
+    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${c.lat}&lon=${c.lng}&limit=7`;
+    try {
+      const data = await (await fetch(url)).json();
+      if (seq !== searchSeq) return; // a newer search is in flight
+      results = data.features && data.features.length ? data.features : null;
+      activeIdx = -1;
+      renderResults();
+    } catch {
+      if (seq === searchSeq) { results = null; renderResults(); }
+    }
+  }
+
+  qEl.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = qEl.value.trim();
+    if (q.length < 3) { searchSeq++; results = []; return renderResults(); }
+    searchTimer = setTimeout(() => runSearch(q), 350);
+  });
+  qEl.addEventListener('keydown', e => {
+    if (!Array.isArray(results) || !results.length) return;
+    if (e.key === 'ArrowDown') { activeIdx = (activeIdx + 1) % results.length; renderResults(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { activeIdx = (activeIdx - 1 + results.length) % results.length; renderResults(); e.preventDefault(); }
+    else if (e.key === 'Enter') { choose(activeIdx >= 0 ? activeIdx : 0); }
+    else if (e.key === 'Escape') { results = []; renderResults(); }
+  });
+  qEl.addEventListener('blur', () => setTimeout(() => { results = []; renderResults(); }, 150));
+
+  function choose(i) {
+    const f = results[i];
+    if (!f) return;
+    const [lng, lat] = f.geometry.coordinates;
+    const { name } = describe(f.properties);
+    qEl.value = name;
+    results = []; renderResults(); qEl.blur();
+
+    // Fit to the place's extent if it has one (e.g. a whole campus), else fly to the point
+    const ext = f.properties.extent; // [minLon, maxLat, maxLon, minLat]
+    if (ext) map.fitBounds([[ext[0], ext[3]], [ext[2], ext[1]]], { padding: 80, pitch: PITCH, bearing: BEARING, maxZoom: 17, duration: 2000 });
+    else map.flyTo({ center: [lng, lat], zoom: 16.5, pitch: PITCH, duration: 2000 });
+
+    if (!placeMarker) {
+      const el = document.createElement('div'); el.className = 'place-pin';
+      placeMarker = new maplibregl.Marker({ element: el });
+    }
+    const pop = document.createElement('div'); pop.className = 'pin-pop';
+    const title = document.createElement('strong'); title.textContent = name;
+    const btn = document.createElement('button'); btn.textContent = 'Set as start';
+    btn.onclick = () => {
+      try { localStorage.setItem('clayMap.start', JSON.stringify([lng, lat])); btn.textContent = 'Saved ✓'; }
+      catch { btn.textContent = 'Could not save'; }
+    };
+    pop.append(title, document.createElement('br'), btn);
+    placeMarker.setLngLat([lng, lat]).setPopup(new maplibregl.Popup({ offset: 14 }).setDOMContent(pop)).addTo(map);
+    placeMarker.togglePopup();
+  }
+
+  // ---- Live coordinates ----
+  const fmt = (lat, lng) => `${lat.toFixed(6)}, ${lng.toFixed(6)}`; // "lat, lng" like Google Maps
+  const cView = document.getElementById('cView'), cCursor = document.getElementById('cCursor'),
+        cZoom = document.getElementById('cZoom'), cHint = document.getElementById('cHint');
+  function updateView() {
+    const c = map.getCenter();
+    cView.textContent = fmt(c.lat, c.lng);
+    cZoom.textContent = map.getZoom().toFixed(1);
+  }
+  map.on('move', updateView);
+  map.on('load', updateView);
+  updateView();
+  map.on('mousemove', e => cCursor.textContent = fmt(e.lngLat.lat, e.lngLat.lng));
+  map.getCanvas().addEventListener('mouseleave', () => cCursor.textContent = '–');
+
+  async function copyText(text, onDone) {
+    try { await navigator.clipboard.writeText(text); onDone(true); }
+    catch { window.prompt('Copy this:', text); onDone(false); }
+  }
+  document.getElementById('coords').onclick = () => {
+    copyText(cView.textContent, ok => {
+      cHint.textContent = ok ? '· copied ✓' : '· click to copy';
+      setTimeout(() => cHint.textContent = '· click to copy', 1500);
+    });
+  };
+
+  // ---- User pins (saved in this browser) ----
+  const PIN_KEY = 'clayMap.pins';
+  let pins = [];       // { id, name, lng, lat }
+  let pinMarkers = {}; // id -> Marker
+  let pinMode = false;
+  const pinModeBtn = document.getElementById('pinMode'),
+        pinExportBtn = document.getElementById('pinExport'),
+        pinClearBtn = document.getElementById('pinClear');
+
+  // Look of new pins = look of the pin you last customized
+  const PIN_DEFAULTS_KEY = 'clayMap.pinDefaults';
+  // size = screen pixels (facing-camera pins), meters = real-world size (planted pins)
+  // farZoom: a planted pin switches to the screen-facing, always-visible marker below this zoom
+  let pinDefaults = { style: 'target', size: 64, meters: 40, color: '#7c3aed', anim: true, flat: true, farZoom: 15, rise: true };
+  try { Object.assign(pinDefaults, JSON.parse(localStorage.getItem(PIN_DEFAULTS_KEY)) || {}); } catch {}
+  function rememberLook(p) {
+    pinDefaults = { style: p.style, size: p.size, meters: p.meters, color: p.color, anim: p.anim, flat: p.flat, farZoom: p.farZoom, rise: p.rise };
+    try { localStorage.setItem(PIN_DEFAULTS_KEY, JSON.stringify(pinDefaults)); } catch {}
+  }
+  // Older saved pins have no look fields: keep them as classic pins
+  const normPin = p => Object.assign({ style: 'pin', size: 30, meters: 40, color: '#7c3aed', label: '', img: null, anim: true, flat: true, farZoom: 15, rise: true }, p);
+  // Planted pins are drawn into the map under the buildings (see "Planted decals");
+  // their DOM marker is just an invisible handle lying flat on the ground for click/drag.
+  // Zoomed out past farZoom, they show as the normal screen-facing marker instead.
+  const isFar = p => map.getZoom() < p.farZoom;
+  const isPlantedNow = p => p.flat && !isFar(p);
+  const alignOf = p => isPlantedNow(p) ? 'map' : 'viewport';
+  const farState = {}; // pin id -> was it in far mode when its marker was built
+  const metersPerPixel = lat => 40075016.686 * Math.cos(lat * Math.PI / 180) / (512 * 2 ** map.getZoom());
+
+  function savePins() {
+    try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); }
+    catch { setStatus('Could not save pins (storage full? try smaller images)', true); }
+    pinExportBtn.style.display = pinClearBtn.style.display = pins.length ? '' : 'none';
+    pins.forEach((p, i) => {
+      if (p.style === 'target' && (p.label || p.img)) return;
+      const n = pinMarkers[p.id]?.getElement().querySelector('.num');
+      if (n) n.textContent = i + 1;
+    });
+  }
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  // Fills the marker's wrapper element with the pin's current look
+  // forceVisual: draw the screen-facing look even for a planted pin (used by the lifted marker)
+  function renderPin(wrap, p, forceVisual) {
+    const num = pins.indexOf(p) + 1;
+    wrap.innerHTML = '';
+    const el = document.createElement('div');
+    el.style.color = p.color;
+
+    if (!forceVisual && isPlantedNow(p)) {
+      // Invisible grab handle covering the ring on the ground; the visuals live in the map layer
+      el.className = 'hit';
+      sizeHit(el, p);
+    } else if (p.style === 'target') {
+      const s = p.size, uid = 'p' + p.id;
+      el.className = 'tgt' + (p.anim ? '' : ' noanim');
+      el.style.width = el.style.height = s + 'px';
+      el.innerHTML = `
+        <svg viewBox="0 0 100 100">
+          <defs>
+            <mask id="seg-${uid}"><circle cx="50" cy="50" r="40" fill="none" stroke="#fff" stroke-width="7"
+              pathLength="100" stroke-dasharray="7.33 1" transform="rotate(-90 50 50)"/></mask>
+            <clipPath id="clip-${uid}"><circle cx="50" cy="50" r="32"/></clipPath>
+          </defs>
+          <circle class="halo" cx="50" cy="50" r="47" fill="none" stroke="currentColor" stroke-width="5"/>
+          <circle class="ticks" cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="3"
+            pathLength="120" stroke-dasharray="0.5 2.5"/>
+          <path d="M50 -3V5M50 95V103M-3 50H5M95 50H103" stroke="currentColor" stroke-width="2.5"/>
+          <g mask="url(#seg-${uid})">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" stroke-opacity=".22" stroke-width="5"/>
+            <circle class="lock" cx="50" cy="50" r="40" fill="none" stroke="currentColor" stroke-width="5"
+              pathLength="100" stroke-dasharray="100 100" transform="rotate(-90 50 50)"/>
+          </g>
+          <circle cx="50" cy="50" r="33" fill="#18222c"/>
+          <circle cx="50" cy="50" r="33" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        <div class="lbl"><div class="nm"></div><span class="dist"></span></div>`;
+      const svg = el.querySelector('svg');
+      if (p.img) {
+        const img = document.createElementNS(SVG_NS, 'image');
+        img.setAttribute('href', p.img);
+        for (const [k, v] of Object.entries({ x: 17, y: 17, width: 66, height: 66, preserveAspectRatio: 'xMidYMid slice', 'clip-path': `url(#clip-${uid})` }))
+          img.setAttribute(k, v);
+        svg.appendChild(img);
+      } else {
+        const t = document.createElementNS(SVG_NS, 'text');
+        for (const [k, v] of Object.entries({ x: 50, y: 51, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+             fill: '#fff', 'font-size': 26, 'font-weight': 600, 'font-family': 'system-ui, sans-serif' }))
+          t.setAttribute(k, v);
+        t.setAttribute('class', p.label ? '' : 'num');
+        t.textContent = p.label || num;
+        svg.appendChild(t);
+      }
+      el.querySelector('.nm').textContent = p.name;
+    } else {
+      const h = p.size, w = Math.round(h * 22 / 30);
+      el.className = 'user-pin';
+      el.style.width = w + 'px'; el.style.height = h + 'px';
+      el.innerHTML = '<svg viewBox="0 0 22 30"><path d="M11 0C4.9 0 0 4.9 0 11c0 8 11 19 11 19s11-11 11-19C22 4.9 17.1 0 11 0z" fill="currentColor" stroke="#fff" stroke-width="2"/></svg><div class="num"></div>';
+      const n = el.querySelector('.num');
+      n.style.top = (h * 0.1) + 'px'; n.style.fontSize = Math.max(8, h * 0.33) + 'px'; n.style.lineHeight = (h * 0.47) + 'px';
+      n.textContent = num;
+    }
+    wrap.appendChild(el);
+  }
+
+  function sizeHit(el, p) {
+    const px = Math.max(18, p.meters / metersPerPixel(p.lat));
+    el.style.width = el.style.height = px + 'px';
+  }
+  map.on('zoom', () => {
+    for (const p of pins) {
+      if (!p.flat) continue;
+      if (isFar(p) !== farState[p.id]) { // crossed the far-view zoom
+        if (isFar(p)) setLift(p, 0, true); // far marker takes over: drop the lifted one at once
+        rebuildMarker(p);
+        continue;
+      }
+      if (!isFar(p)) { const el = pinMarkers[p.id]?.getElement().firstChild; if (el) sizeHit(el, p); }
+    }
+  });
+
+  // Rebuild a pin's marker (anchor/alignment changed), keeping its popup and open state
+  function rebuildMarker(p) {
+    const m = pinMarkers[p.id];
+    if (!m) return;
+    const open = m.getPopup().isOpen();
+    const content = open ? m.getPopup().getElement()?.querySelector('.pin-edit') : undefined;
+    m.remove();
+    addPinMarker(p, open, content);
+    if (decals[p.id]) decals[p.id].t0 = performance.now(); // replay the lock-on sweep
+  }
+
+  const popupOffset = p => isPlantedNow(p) ? 12 : p.style === 'target' ? p.size / 2 + 6 : p.size - 2;
+
+  // ---- Planted decals: each planted pin is an animated canvas drawn as a map layer
+  // just below the 3D buildings, so buildings in front of it hide it. ----
+  // Canvas covers ring units x -5..105, y -5..140 (ring centre = 50,50; 100 units = p.meters).
+  const DU = { x0: -5, x1: 105, y0: -5, y1: 140 }, DPX = 4.6;
+  const decals = {}; // pin id -> { canvas, ctx, t0, img, imgSrc, dist }
+  let mapReady = false;
+  map.on('load', () => { mapReady = true; pins.forEach(syncDecal); updateDistances(); checkOcclusion(); });
+
+  function decalCoords(p) {
+    const mPerU = p.meters / 100, lngK = 111320 * Math.cos(p.lat * Math.PI / 180), latK = 110574;
+    const at = (ux, uy) => [p.lng + (ux - 50) * mPerU / lngK, p.lat - (uy - 50) * mPerU / latK];
+    return [at(DU.x0, DU.y0), at(DU.x1, DU.y0), at(DU.x1, DU.y1), at(DU.x0, DU.y1)];
+  }
+
+  function removeDecal(id) {
+    const sid = 'decal-' + id;
+    if (map.getLayer(sid)) map.removeLayer(sid);
+    if (map.getSource(sid)) map.removeSource(sid);
+    delete decals[id];
+  }
+
+  function syncDecal(p) {
+    if (!p.flat) return removeDecal(p.id);
+    if (!mapReady) return;
+    const sid = 'decal-' + p.id;
+    let d = decals[p.id];
+    if (!d || !map.getSource(sid)) { // new pin, or the style was reloaded and dropped our layer
+      if (!d) {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round((DU.x1 - DU.x0) * DPX);
+        canvas.height = Math.round((DU.y1 - DU.y0) * DPX);
+        d = decals[p.id] = { canvas, ctx: canvas.getContext('2d'), t0: performance.now(), dist: '' };
+      }
+      drawDecal(p, d, performance.now());
+      map.addSource(sid, { type: 'canvas', canvas: d.canvas, coordinates: decalCoords(p), animate: true });
+      map.addLayer({ id: sid, type: 'raster', source: sid, paint: { 'raster-fade-duration': 0 } }, 'buildings');
+    } else {
+      map.getSource(sid).setCoordinates(decalCoords(p));
+    }
+    // Hidden while zoomed out past the far-view zoom (the screen-facing marker shows instead)
+    map.setLayoutProperty(sid, 'visibility', isFar(p) ? 'none' : 'visible');
+    if (p.img !== d.imgSrc) {
+      d.imgSrc = p.img; d.img = null;
+      if (p.img) { const im = new Image(); im.onload = () => { d.img = im; }; im.src = p.img; }
+    }
+  }
+
+  const PIN_PATH = new Path2D('M11 0C4.9 0 0 4.9 0 11c0 8 11 19 11 19s11-11 11-19C22 4.9 17.1 0 11 0z');
+  function decalLabel(c, name, dist, y) {
+    c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+    c.strokeStyle = T.label.halo;
+    c.font = '600 11px system-ui, sans-serif'; c.lineWidth = 3;
+    c.strokeText(name, 50, y); c.fillStyle = T.label.fg; c.fillText(name, 50, y);
+    if (dist) {
+      c.font = '500 9px system-ui, sans-serif'; c.lineWidth = 2.5;
+      c.strokeText(dist, 50, y + 11); c.fillStyle = T.label.sub; c.fillText(dist, 50, y + 11);
+    }
+  }
+
+  function drawDecal(p, d, now) {
+    const c = d.ctx, cv = d.canvas, t = (now - d.t0) / 1000, col = p.color, TAU = Math.PI * 2;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, cv.width, cv.height);
+    c.setTransform(DPX, 0, 0, DPX, -DU.x0 * DPX, -DU.y0 * DPX); // draw in ring units from here on
+    c.lineCap = 'butt';
+
+    if (p.style === 'target') {
+      // pulsing halo
+      const ph = p.anim ? (Math.sin(t * TAU / 2.4 - Math.PI / 2) + 1) / 2 : 0;
+      c.globalAlpha = 0.12 + 0.26 * ph; c.strokeStyle = col; c.lineWidth = 5;
+      c.beginPath(); c.arc(50, 50, 47 * (1 + 0.07 * ph), 0, TAU); c.stroke();
+      c.globalAlpha = 1;
+      // rotating tick ring
+      const rot = p.anim ? t * TAU / 16 : 0;
+      c.lineWidth = 1.2; c.beginPath();
+      for (let i = 0; i < 40; i++) {
+        const a = rot + i * TAU / 40, ca = Math.cos(a), sa = Math.sin(a);
+        c.moveTo(50 + 44.5 * ca, 50 + 44.5 * sa); c.lineTo(50 + 47.5 * ca, 50 + 47.5 * sa);
+      }
+      c.stroke();
+      // compass notches
+      c.lineWidth = 2.5; c.beginPath();
+      c.moveTo(50, -3); c.lineTo(50, 5); c.moveTo(50, 95); c.lineTo(50, 103);
+      c.moveTo(-3, 50); c.lineTo(5, 50); c.moveTo(95, 50); c.lineTo(103, 50);
+      c.stroke();
+      // segmented lock ring: dim track + bright sweep
+      const k = Math.min(1, Math.max(0, (t - 0.1) / 1.1)), prog = 1 - (1 - k) ** 3;
+      const lockEnd = -Math.PI / 2 + prog * TAU;
+      c.lineWidth = 5;
+      for (let i = 0; i < 12; i++) {
+        const a0 = -Math.PI / 2 + i * TAU / 12, a1 = a0 + TAU * 0.0733;
+        c.globalAlpha = 0.22; c.beginPath(); c.arc(50, 50, 40, a0, a1); c.stroke();
+        if (lockEnd > a0) { c.globalAlpha = 1; c.beginPath(); c.arc(50, 50, 40, a0, Math.min(a1, lockEnd)); c.stroke(); }
+      }
+      c.globalAlpha = 1;
+      // centre disc + image or text
+      c.fillStyle = '#18222c'; c.beginPath(); c.arc(50, 50, 33, 0, TAU); c.fill();
+      c.lineWidth = 1.5; c.stroke();
+      if (d.img) {
+        c.save(); c.beginPath(); c.arc(50, 50, 32, 0, TAU); c.clip(); c.drawImage(d.img, 17, 17, 66, 66); c.restore();
+      } else {
+        c.fillStyle = '#fff'; c.font = '600 26px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(p.label || String(pins.indexOf(p) + 1), 50, 51);
+      }
+      decalLabel(c, p.name, d.dist, 113);
+    } else {
+      // classic pin lying on the ground, tip at the pin's location
+      c.save(); c.translate(50 - 11 * 1.8, 50 - 30 * 1.8); c.scale(1.8, 1.8);
+      c.fillStyle = col; c.fill(PIN_PATH); c.strokeStyle = '#fff'; c.lineWidth = 1.2; c.stroke(PIN_PATH);
+      c.fillStyle = '#fff'; c.font = '600 10px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(String(pins.indexOf(p) + 1), 11, 11.5);
+      c.restore();
+      decalLabel(c, p.name, '', 60);
+    }
+  }
+
+  (function decalLoop(now) {
+    for (const p of pins) { const d = decals[p.id]; if (d && !farState[p.id]) drawDecal(p, d, now); }
+    requestAnimationFrame(decalLoop);
+  })(performance.now());
+
+  // Crop an uploaded image to a small square so it fits in browser storage
+  function loadSquareImage(file) {
+    return new Promise((ok, fail) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
+        const k = Math.max(S / img.width, S / img.height), w = img.width * k, h = img.height * k;
+        c.getContext('2d').drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+        URL.revokeObjectURL(url);
+        ok(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); fail(); };
+      img.src = url;
+    });
+  }
+
+  function mk(tag, props = {}) { return Object.assign(document.createElement(tag), props); }
+
+  function pinPopup(p) {
+    const box = mk('div', { className: 'pin-edit' });
+    const name = mk('input', { value: p.name, placeholder: 'Name (e.g. Stop: Main Gate)' });
+    name.oninput = () => {
+      p.name = name.value;
+      const nm = pinMarkers[p.id]?.getElement().querySelector('.nm');
+      if (nm) nm.textContent = p.name;
+      savePins();
+    };
+    const code = mk('code');
+    const refresh = () => code.textContent = fmt(p.lat, p.lng);
+    refresh();
+
+    // Look controls
+    const ctl = mk('div', { className: 'ctl' });
+    const style = mk('select');
+    style.append(mk('option', { value: 'target', textContent: 'Target lock' }), mk('option', { value: 'pin', textContent: 'Classic pin' }));
+    style.value = p.style;
+    const szWrap = mk('div', { className: 'sz' });
+    const size = mk('input', { type: 'range' });
+    const sizeOut = mk('output');
+    szWrap.append(size, sizeOut);
+    // Planted pins are sized in meters, facing-camera pins in pixels
+    const sizeKey = () => p.flat ? 'meters' : 'size';
+    const syncSize = () => {
+      const [min, max] = p.flat ? [5, 300] : [20, 160];
+      size.min = min; size.max = max; size.value = p[sizeKey()];
+      sizeOut.textContent = p[sizeKey()] + (p.flat ? ' m' : ' px');
+    };
+    syncSize();
+    const color = mk('input', { type: 'color', value: p.color });
+    const label = mk('input', { type: 'text', maxLength: 3, value: p.label, placeholder: 'number' });
+    const imgWrap = mk('div', { className: 'img' });
+    const file = mk('input', { type: 'file', accept: 'image/*', hidden: true });
+    const upBtn = mk('button', { textContent: p.img ? 'Change' : 'Upload…' });
+    const rmBtn = mk('button', { textContent: 'Remove' });
+    rmBtn.style.display = p.img ? '' : 'none';
+    imgWrap.append(upBtn, rmBtn, file);
+    const anim = mk('input', { type: 'checkbox', checked: p.anim });
+    const flat = mk('input', { type: 'checkbox', checked: p.flat, title: 'Lie flat on the ground instead of facing the camera' });
+
+    // Far view: below this zoom a planted pin shows as the always-visible marker
+    const farWrap = mk('div', { className: 'sz', title: 'Zoomed out past this level, the pin stops being planted and shows above buildings' });
+    const far = mk('input', { type: 'range', min: 10, max: 19, step: 0.1, value: p.farZoom });
+    const farOut = mk('output');
+    const farNow = mk('button', { textContent: 'Now', title: 'Use the current zoom level' });
+    farNow.style.cssText = 'flex:0 0 auto;padding:3px 7px;background:#eef2f6;color:#333';
+    farWrap.append(far, farOut, farNow);
+    const syncFar = () => { far.value = p.farZoom; farOut.textContent = 'z ' + (+p.farZoom).toFixed(1); };
+    syncFar();
+    const setFar = z => {
+      p.farZoom = Math.round(Math.min(19, Math.max(10, z)) * 10) / 10;
+      syncFar(); rememberLook(p); savePins();
+      if (isFar(p) !== farState[p.id]) rebuildMarker(p); else syncDecal(p);
+    };
+    far.oninput = () => setFar(+far.value);
+    farNow.onclick = () => setFar(map.getZoom());
+
+    // Far size: screen size (px) of the always-visible marker shown when zoomed out
+    const farSzWrap = mk('div', { className: 'sz', title: 'Size of the marker shown when zoomed out past Far view, or lifted above a building' });
+    const farSz = mk('input', { type: 'range', min: 16, max: 160 });
+    const farSzOut = mk('output');
+    farSzWrap.append(farSz, farSzOut);
+    const syncFarSz = () => { farSz.value = p.size; farSzOut.textContent = p.size + ' px'; };
+    syncFarSz();
+    farSz.oninput = () => { p.size = +farSz.value; syncFarSz(); updateLook(p); };
+
+    // Rise up: hover above a building that blocks the planted pin
+    const rise = mk('input', { type: 'checkbox', checked: p.rise, title: 'When a building hides this pin, lift it above the roof' });
+    rise.onchange = () => { p.rise = rise.checked; rememberLook(p); savePins(); checkOcclusion(); };
+
+    const rows = [['Style', style], ['Size', szWrap], ['Color', color], ['Planted', flat], ['Far view', farWrap],
+                  ['Float size', farSzWrap], ['Rise up', rise], ['Center', label], ['Image', imgWrap], ['Animate', anim]];
+    const targetOnly = [], plantedOnly = [];
+    for (const [t, c] of rows) {
+      const l = mk('span', { textContent: t });
+      ctl.append(l, c);
+      if (['Center', 'Image', 'Animate'].includes(t)) targetOnly.push(l, c);
+      if (t === 'Far view' || t === 'Float size' || t === 'Rise up') plantedOnly.push(l, c);
+    }
+    const syncVisibility = () => {
+      targetOnly.forEach(e => e.classList.toggle('hide', p.style !== 'target'));
+      plantedOnly.forEach(e => e.classList.toggle('hide', !p.flat));
+    };
+    syncVisibility();
+
+    style.onchange = () => {
+      p.style = style.value;
+      if (p.style === 'target' && p.size < 40) p.size = 64;
+      if (p.style === 'pin' && p.size > 60) p.size = 30;
+      syncSize(); syncFarSz(); syncVisibility(); updateLook(p, true);
+    };
+    size.oninput = () => { p[sizeKey()] = +size.value; syncSize(); updateLook(p); };
+    color.oninput = () => { p.color = color.value; updateLook(p); };
+    label.oninput = () => { p.label = label.value.trim(); updateLook(p); };
+    anim.onchange = () => { p.anim = anim.checked; updateLook(p); };
+    flat.onchange = () => { p.flat = flat.checked; syncSize(); syncFarSz(); syncVisibility(); updateLook(p, true); };
+    upBtn.onclick = () => file.click();
+    file.onchange = async () => {
+      if (!file.files[0]) return;
+      try { p.img = await loadSquareImage(file.files[0]); upBtn.textContent = 'Change'; rmBtn.style.display = ''; updateLook(p); }
+      catch { upBtn.textContent = 'Not an image'; }
+      file.value = '';
+    };
+    rmBtn.onclick = () => { p.img = null; upBtn.textContent = 'Upload…'; rmBtn.style.display = 'none'; updateLook(p); };
+
+    const row = mk('div', { className: 'row' });
+    const copy = mk('button', { className: 'copy', textContent: 'Copy coords' });
+    copy.onclick = () => copyText(fmt(p.lat, p.lng), ok => { copy.textContent = ok ? 'Copied ✓' : 'Copy coords'; setTimeout(() => copy.textContent = 'Copy coords', 1500); });
+    const del = mk('button', { className: 'del', textContent: 'Delete' });
+    del.onclick = () => removePin(p.id);
+    row.append(copy, del);
+    box.append(name, code, ctl, row);
+    box._refresh = refresh;
+    return box;
+  }
+
+  // Re-draw a pin after its look changed. Style changes need a new marker (different anchor).
+  function updateLook(p, styleChanged) {
+    const m = pinMarkers[p.id];
+    if (!m) return;
+    if (styleChanged) {
+      const content = m.getPopup().getElement()?.querySelector('.pin-edit');
+      m.remove();
+      addPinMarker(p, true, content);
+    } else {
+      renderPin(m.getElement(), p);
+      m.getPopup().setOffset(popupOffset(p));
+    }
+    syncDecal(p);
+    if (decals[p.id] && styleChanged) decals[p.id].t0 = performance.now(); // replay lock-on
+    refreshLiftHead(p);
+    rememberLook(p);
+    savePins();
+    updateDistances();
+    checkOcclusion();
+  }
+
+  // ---- Pin gestures: left click = fly in, right click = customize, click-and-hold = move ----
+  const FOCUS_ZOOM = 17, HOLD_MS = 350, MOVE_TOL = 6;
+  const PIN_HINT = 'Click: zoom in · Right-click: customize · Hold: move';
+  const popupContent = {}; // pin id -> its popup's DOM content
+
+  const focusZoom = p => Math.max(FOCUS_ZOOM, p.flat ? p.farZoom + 1 : 0);
+  function flyToPin(p) {
+    map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), focusZoom(p)),
+                pitch: Math.max(map.getPitch(), 50), duration: 1600, essential: true });
+  }
+  function openPinEditor(p) {
+    const m = pinMarkers[p.id];
+    if (m && !m.getPopup().isOpen()) m.togglePopup();
+  }
+  function movePinTo(p, ll) {
+    p.lng = ll.lng; p.lat = ll.lat;
+    pinMarkers[p.id]?.setLngLat(ll);
+    lifts[p.id]?.marker.setLngLat(ll);
+    popupContent[p.id]?._refresh();
+    syncDecal(p);
+    updateDistances();
+  }
+  function setGrabbing(p, on) {
+    for (const el of [pinMarkers[p.id]?.getElement(), lifts[p.id]?.el]) el?.classList.toggle('grabbing', on);
+    document.body.classList.toggle('grabbing', on);
+  }
+
+  // Attach the gestures to a marker element (the pin itself, or its lifted head)
+  function attachPinGestures(el, p) {
+    el.title = PIN_HINT;
+    let timer = null, start = null, dragging = false, moved = false, touch = false;
+    const pos = e => {
+      const t = e.touches ? (e.touches[0] || e.changedTouches[0]) : e;
+      const r = map.getCanvasContainer().getBoundingClientRect();
+      return { x: t.clientX - r.left, y: t.clientY - r.top, cx: t.clientX, cy: t.clientY };
+    };
+    const stopListening = () => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      window.removeEventListener('touchmove', move); window.removeEventListener('touchend', up);
+      window.removeEventListener('touchcancel', up);
+    };
+    function down(e) {
+      if (e.type === 'mousedown' && e.button !== 0) return; // right button handled by contextmenu
+      e.stopPropagation(); // keep the map from panning / treating it as a map click
+      if (e.type === 'mousedown') e.preventDefault();
+      touch = e.type === 'touchstart';
+      start = pos(e); dragging = false; moved = false;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null; dragging = true;
+        setGrabbing(p, true);
+        pinMarkers[p.id]?.getPopup().remove();
+        setStatus(`Moving "${p.name}": release to drop`);
+      }, HOLD_MS);
+      if (touch) {
+        window.addEventListener('touchmove', move, { passive: false });
+        window.addEventListener('touchend', up); window.addEventListener('touchcancel', up);
+      } else {
+        window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+      }
+    }
+    function move(e) {
+      const q = pos(e);
+      if (dragging) {
+        if (e.cancelable) e.preventDefault();
+        moved = true;
+        movePinTo(p, map.unproject([q.x, q.y]));
+      } else if (timer && Math.hypot(q.cx - start.cx, q.cy - start.cy) > MOVE_TOL) {
+        clearTimeout(timer); timer = null; // moved before the hold kicked in: ignore this press
+      }
+    }
+    function up() {
+      stopListening();
+      if (dragging) {
+        dragging = false;
+        setGrabbing(p, false);
+        setStatus('');
+        if (moved) { savePins(); checkOcclusion(); }
+        else if (touch) openPinEditor(p); // touch has no right click: hold without moving = customize
+        return;
+      }
+      if (timer) { clearTimeout(timer); timer = null; flyToPin(p); } // quick click / tap
+    }
+    el.addEventListener('mousedown', down);
+    el.addEventListener('touchstart', down, { passive: true });
+    el.addEventListener('click', e => e.stopPropagation()); // no map click / built-in popup toggle
+    el.addEventListener('dblclick', e => e.stopPropagation());
+    el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); openPinEditor(p); });
+  }
+
+  function addPinMarker(p, openPopup, existingContent) {
+    const content = existingContent || pinPopup(p);
+    popupContent[p.id] = content;
+    const wrap = document.createElement('div');
+    farState[p.id] = isFar(p);
+    const anchor = isPlantedNow(p) || p.style === 'target' ? 'center' : 'bottom';
+    const m = new maplibregl.Marker({ element: wrap, anchor,
+                                      pitchAlignment: alignOf(p), rotationAlignment: alignOf(p) })
+      .setLngLat([p.lng, p.lat])
+      .setPopup(new maplibregl.Popup({ offset: popupOffset(p), closeOnClick: false, maxWidth: '280px' }).setDOMContent(content))
+      .addTo(map);
+    pinMarkers[p.id] = m;
+    renderPin(wrap, p);
+    attachPinGestures(wrap, p);
+    syncDecal(p);
+    if (openPopup) m.togglePopup();
+  }
+
+  // ---- Distance labels (from you if placed, else from the view center) ----
+  function haversine(a, b) {
+    const R = 6371008.8, r = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * r, dLng = (b.lng - a.lng) * r;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  function fmtDist(d) {
+    if (d < 1000) return Math.round(d) + ' m';
+    return (d / 1000).toLocaleString(undefined, { maximumFractionDigits: d < 100000 ? 2 : 0 }) + ' km';
+  }
+  function updateDistances() {
+    const ref = meLngLat || map.getCenter();
+    const suffix = meLngLat ? '' : ' from center';
+    for (const p of pins) {
+      if (p.style !== 'target') continue;
+      const text = fmtDist(haversine(ref, p)) + suffix;
+      if (decals[p.id]) decals[p.id].dist = text;
+      for (const el of [pinMarkers[p.id]?.getElement(), lifts[p.id]?.marker.getElement()]) {
+        const d = el?.querySelector('.dist');
+        if (d) d.textContent = text;
+      }
+    }
+  }
+  map.on('move', updateDistances);
+
+  // ---- Rise up: lift planted pins above buildings that hide them ----
+  const lifts = {}; // pin id -> { marker, el, head, stem, h (meters above ground, 0 = on the ground) }
+
+  // Screen pixels per meter at the pin's spot, measured across the view (not foreshortened)
+  function pxPerMeter(p) {
+    const b = (map.getBearing() + 90) * Math.PI / 180;
+    const lngK = 111320 * Math.cos(p.lat * Math.PI / 180), latK = 110574;
+    const a = map.project([p.lng, p.lat]);
+    const c = map.project([p.lng + 10 * Math.sin(b) / lngK, p.lat + 10 * Math.cos(b) / latK]);
+    return Math.hypot(c.x - a.x, c.y - a.y) / 10;
+  }
+  // How tall (px) a vertical line of h meters at the pin looks on screen
+  const risePx = (p, h) => h * pxPerMeter(p) * Math.sin(map.getPitch() * Math.PI / 180);
+
+  function refreshLiftHead(p) {
+    const L = lifts[p.id];
+    if (!L) return;
+    L.el.style.color = p.color;
+    renderPin(L.head, p, true);
+  }
+
+  function ensureLift(p) {
+    if (lifts[p.id]) return lifts[p.id];
+    const el = mk('div', { className: 'lift off' });
+    const head = mk('div', { className: 'lift-head', title: 'Lifted above a building that hides this pin' });
+    const stem = mk('div', { className: 'lift-stem' });
+    stem.style.height = '0px';
+    el.append(head, stem);
+    attachPinGestures(head, p);
+    const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([p.lng, p.lat]).addTo(map);
+    lifts[p.id] = { marker, el, head, stem, h: 0 };
+    refreshLiftHead(p);
+    return lifts[p.id];
+  }
+
+  function removeLift(id) {
+    lifts[id]?.marker.remove();
+    delete lifts[id];
+  }
+
+  // h = meters above ground to hover at (0 = settle back onto the ground).
+  // instant: hide right away with no fade (used when the pin switches to far view)
+  function setLift(p, h, instant) {
+    if (!h && !lifts[p.id]) return;
+    const L = ensureLift(p);
+    L.el.classList.toggle('hard-off', !h && !!instant);
+    if (h) L.el.classList.remove('hard-off');
+    const wasUp = L.h > 0, up = h > 0;
+    L.h = h;
+    if (up !== wasUp) {
+      L.el.classList.add('tween');
+      clearTimeout(L.tweenTimer);
+      L.tweenTimer = setTimeout(() => L.el.classList.remove('tween'), 450);
+      if (up) refreshLiftHead(p); // replay lock-on as it rises
+    }
+    L.el.classList.toggle('off', !up);
+    L.stem.style.height = (up ? risePx(p, h) : 0) + 'px';
+    updateDistances();
+  }
+
+  // Keep tether lengths right while the camera moves
+  map.on('move', () => {
+    for (const id in lifts) {
+      const L = lifts[id], p = pins.find(q => q.id === id);
+      if (p && L.h > 0) L.stem.style.height = risePx(p, L.h) + 'px';
+    }
+  });
+
+  // Ask MapLibre which 3D buildings cover the pin's ground spot on screen.
+  // Rays that hit the ground at the pin can only pass through buildings in front of it.
+  // Which buildings cover a ground spot (centre + 4 points r meters around it) on screen
+  function occlusionAt(pt, r) {
+    const W = map.getCanvas().clientWidth, H = map.getCanvas().clientHeight;
+    const lngK = 111320 * Math.cos(pt.lat * Math.PI / 180), latK = 110574;
+    const samples = [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]
+      .map(([dx, dy]) => map.project([pt.lng + dx / lngK, pt.lat + dy / latK]));
+    let hits = 0, centreHit = false, maxH = 0;
+    samples.forEach((s, i) => {
+      if (s.x < 0 || s.y < 0 || s.x > W || s.y > H) return;
+      const fs = map.queryRenderedFeatures([s.x, s.y], { layers: ['buildings'] });
+      if (!fs.length) return;
+      hits++; if (i === 0) centreHit = true;
+      for (const f of fs) maxH = Math.max(maxH, +f.properties.render_height || 8);
+    });
+    return { hits, centreHit, maxH };
+  }
+
+  function checkOcclusion() {
+    if (!mapReady || !map.getLayer('buildings')) return;
+    for (const p of pins) {
+      if (!isPlantedNow(p) || !p.rise) { setLift(p, 0); continue; }
+      const o = occlusionAt(p, p.meters * 0.3);
+      // Blocked when the centre or most of the ring is covered
+      setLift(p, o.centreHit || o.hits >= 3 ? o.maxH + 10 : 0);
+    }
+  }
+  let occTimer = null;
+  const scheduleOcclusion = () => { if (!occTimer) occTimer = setTimeout(() => { occTimer = null; checkOcclusion(); }, 120); };
+  map.on('move', scheduleOcclusion);
+  // Final check once the camera stops ('idle' never fires here: animated pins keep the map repainting)
+  map.on('moveend', checkOcclusion);
+  // Re-check when building tiles finish loading
+  map.on('sourcedata', e => { if (e.sourceId === 'omt' && e.isSourceLoaded) scheduleOcclusion(); });
+
+  function removePin(id) {
+    pinMarkers[id]?.remove(); delete pinMarkers[id];
+    removeDecal(id);
+    removeLift(id);
+    pins = pins.filter(p => p.id !== id);
+    savePins();
+  }
+
+  function setPinMode(on) {
+    pinMode = on;
+    pinModeBtn.classList.toggle('on', on);
+    pinModeBtn.textContent = on ? 'Dropping pins… (Esc)' : 'Drop pins';
+    if (!placingMe) map.getCanvas().style.cursor = on ? 'crosshair' : '';
+  }
+  pinModeBtn.onclick = () => setPinMode(!pinMode);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && pinMode && document.activeElement.tagName !== 'INPUT') setPinMode(false); });
+
+  map.on('click', e => {
+    if (!pinMode || placingMe) return;
+    // Ignore clicks on existing pins/markers/popups so opening a pin doesn't drop a new one
+    if (e.originalEvent?.target?.closest?.('.maplibregl-marker, .maplibregl-popup')) return;
+    const p = Object.assign({ label: '', img: null }, pinDefaults, {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      name: `Pin ${pins.length + 1}`, lng: e.lngLat.lng, lat: e.lngLat.lat });
+    pins.push(p);
+    addPinMarker(p, false);
+    savePins();
+    updateDistances();
+  });
+
+  pinClearBtn.onclick = () => {
+    if (!confirm(`Delete all ${pins.length} pins?`)) return;
+    Object.values(pinMarkers).forEach(m => m.remove());
+    Object.keys(decals).forEach(removeDecal);
+    Object.keys(lifts).forEach(removeLift);
+    pinMarkers = {}; pins = []; savePins();
+  };
+
+  pinExportBtn.onclick = () => {
+    const gj = { type: 'FeatureCollection', features: pins.map((p, i) => ({
+      type: 'Feature', properties: { order: i + 1, name: p.name, style: p.style, planted: p.flat, far_view_zoom: p.farZoom,
+        size_px: p.size, size_m: p.meters, color: p.color, label: p.label, animate: p.anim, rise: p.rise,
+        image: p.img || undefined },
+      geometry: { type: 'Point', coordinates: [+p.lng.toFixed(7), +p.lat.toFixed(7)] } })) };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(gj, null, 2)], { type: 'application/geo+json' }));
+    a.download = 'pins.geojson';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  // ---- Import pins: our exported .geojson, any GeoJSON points, or GPX waypoints (<wpt>) ----
+  const pinImportBtn = document.getElementById('pinImport'), pinFile = document.getElementById('pinFile');
+  pinImportBtn.onclick = () => pinFile.click();
+
+  function parseGeoJSONPoints(gj) {
+    const feats = gj?.type === 'FeatureCollection' ? gj.features : gj?.type === 'Feature' ? [gj] : [];
+    return (feats || [])
+      .map((f, i) => ({ f, i }))
+      .filter(({ f }) => f?.geometry?.type === 'Point' && Array.isArray(f.geometry.coordinates))
+      .sort((a, b) => (+a.f.properties?.order || a.i + 1) - (+b.f.properties?.order || b.i + 1))
+      .map(({ f }) => ({ lng: +f.geometry.coordinates[0], lat: +f.geometry.coordinates[1], props: f.properties || {} }));
+  }
+  function parseGpxWaypoints(text) {
+    const xml = new DOMParser().parseFromString(text, 'application/xml');
+    if (xml.querySelector('parsererror')) throw new Error('not valid GPX');
+    return [...xml.getElementsByTagName('wpt')].map(w => ({
+      lng: +w.getAttribute('lon'), lat: +w.getAttribute('lat'),
+      props: { name: w.getElementsByTagName('name')[0]?.textContent?.trim() } }));
+  }
+
+  // Turn imported properties into a pin, falling back to your current defaults for anything missing/invalid
+  function pinFromImport({ lng, lat, props: q }) {
+    const num = (v, lo, hi) => (isFinite(+v) && v !== null && v !== '' ? Math.min(hi, Math.max(lo, +v)) : undefined);
+    const bool = v => (typeof v === 'boolean' ? v : undefined);
+    const look = {
+      style: ['target', 'pin'].includes(q.style) ? q.style : undefined,
+      flat: bool(q.planted), anim: bool(q.animate), rise: bool(q.rise),
+      farZoom: num(q.far_view_zoom, 10, 19), size: num(q.size_px, 16, 160), meters: num(q.size_m, 5, 300),
+      color: /^#[0-9a-f]{6}$/i.test(q.color || '') ? q.color : undefined,
+      label: typeof q.label === 'string' ? q.label.slice(0, 3) : undefined,
+      img: typeof q.image === 'string' && q.image.startsWith('data:image/') ? q.image : undefined
+    };
+    for (const k in look) if (look[k] === undefined) delete look[k];
+    return Object.assign({ label: '', img: null }, pinDefaults, look, {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      name: (typeof q.name === 'string' && q.name.trim()) || `Pin ${pins.length + 1}`,
+      lng, lat });
+  }
+
+  pinFile.onchange = async () => {
+    const file = pinFile.files[0];
+    pinFile.value = '';
+    if (!file) return;
+    let items;
+    try {
+      const text = await file.text();
+      items = /\.gpx$/i.test(file.name) || text.trimStart().startsWith('<')
+        ? parseGpxWaypoints(text) : parseGeoJSONPoints(JSON.parse(text));
+    } catch {
+      return setStatus(`Couldn't read "${file.name}": expected a .geojson or .gpx file`, true, 5000);
+    }
+    items = items.filter(it => isFinite(it.lng) && isFinite(it.lat) && Math.abs(it.lat) <= 90 && Math.abs(it.lng) <= 180);
+    if (!items.length) return setStatus(`No points found in "${file.name}"`, true, 5000);
+
+    // Skip pins you already have (same name within ~1 m), so importing twice doesn't duplicate
+    let added = 0, skipped = 0;
+    const newOnes = [];
+    for (const it of items) {
+      const p = pinFromImport(it);
+      if (pins.some(q => q.name === p.name && haversine(q, p) < 1)) { skipped++; continue; }
+      pins.push(p); addPinMarker(p, false); newOnes.push(p); added++;
+    }
+    savePins(); updateDistances();
+    setStatus(`Imported ${added} pin${added === 1 ? '' : 's'}` + (skipped ? ` (${skipped} already here, skipped)` : ''), false, 5000);
+    if (!newOnes.length) return;
+    // Show what came in
+    if (newOnes.length === 1) flyToPin(newOnes[0]);
+    else {
+      const b = new maplibregl.LngLatBounds();
+      newOnes.forEach(p => b.extend([p.lng, p.lat]));
+      map.fitBounds(b, { padding: 100, maxZoom: 17, pitch: map.getPitch(), duration: 1500 });
+    }
+    setTimeout(checkOcclusion, 1700);
+  };
+
+  // Restore saved pins
+  try {
+    const saved = JSON.parse(localStorage.getItem(PIN_KEY));
+    if (Array.isArray(saved)) pins = saved.filter(p => p && isFinite(p.lng) && isFinite(p.lat)).map(normPin);
+  } catch {}
+  pins.forEach(p => addPinMarker(p, false));
+  savePins();
+  updateDistances();
+
+  let tiltOn = true;
+  document.getElementById('tilt').onclick = () => {
+    tiltOn = !tiltOn;
+    document.querySelectorAll('.tilt').forEach(el => el.style.display = tiltOn ? '' : 'none');
+  };
+
+  // ---- Theme button: Auto (follow system) -> Light -> Dark ----
+  const themeBtn = document.getElementById('theme');
+  const THEME_LABELS = { auto: '◐ Auto', light: '☀ Light', dark: '☾ Dark' };
+  function applyTheme() {
+    const name = effectiveTheme();
+    T = MAP_THEMES[name];
+    document.documentElement.dataset.theme = name;
+    themeBtn.textContent = THEME_LABELS[themePref];
+    themeBtn.title = themePref === 'auto' ? `Theme: Auto (following your system: ${name})` : `Theme: ${name}`;
+    if (!map.isStyleLoaded()) return; // the 'load' handler applies it once the map is ready
+    map.setPaintProperty('bg', 'background-color', T.land);
+    map.setPaintProperty('water', 'fill-color', T.water);
+    map.setPaintProperty('park', 'fill-color', T.park);
+    map.setPaintProperty('roads', 'line-color', T.road);
+    map.setPaintProperty('buildings', 'fill-extrusion-color', T.building);
+    map.setLight(lightOf(T));
+    map.setSky(skyOf(T));
+  }
+  themeBtn.onclick = () => {
+    themePref = { auto: 'light', light: 'dark', dark: 'auto' }[themePref] || 'auto';
+    try { localStorage.setItem(THEME_KEY, themePref); } catch {}
+    applyTheme();
+  };
+  darkQuery.addEventListener('change', () => { if (themePref === 'auto') applyTheme(); });
+  map.on('load', applyTheme);
+  applyTheme();
+</script>
+</body>
+</html>
