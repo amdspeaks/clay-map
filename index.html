@@ -1414,8 +1414,10 @@
   let trafficOn = false;
   try { trafficOn = localStorage.getItem('clayMap.traffic') === '1'; } catch {}
   trafficBtn.hidden = !TT_KEY;
-  const TRAFFIC_LAYERS = ['tt-inc-badge', 'tt-inc-line', 'tt-flow', 'tt-flow-closed'];
-  const ttTiles = kind => [`${TT}/traffic/map/4/tile/${kind}/{z}/{x}/{y}.pbf?key=${TT_KEY}&t=${Math.floor(Date.now() / 120000)}`];
+  const TRAFFIC_LAYERS = ['tt-inc-badge', 'tt-flow-minor', 'tt-flow', 'tt-flow-closed'];
+  // (No cache-busting parameter: TomTom reads "t" as a traffic-model id and rejects made-up values.)
+  const ttTiles = kind => [`${TT}/traffic/map/4/tile/${kind}/{z}/{x}/{y}.pbf?key=${TT_KEY}`];
+  const MAIN_ROADS = ['Motorway', 'International road', 'Major road', 'Secondary road'];
 
   // Incident badges: small round icons drawn once into the map's image store
   const INCIDENT_KINDS = { // TomTom iconCategory -> look
@@ -1453,16 +1455,20 @@
     };
 
     map.addSource('tt-flow', { type: 'vector', tiles: ttTiles('flow/relative'), maxzoom: 18, attribution: 'Traffic © TomTom' });
+    const slow = ['all', ['!=', ['get', 'road_closure'], true], ['<', ['to-number', ['get', 'traffic_level'], 1], 0.75]];
+    const isMain = ['in', ['get', 'road_type'], ['literal', MAIN_ROADS]];
+    const flowPaint = {
+      // traffic_level = current speed / normal speed
+      'line-color': ['step', ['to-number', ['get', 'traffic_level'], 1], '#8b1e1e', 0.15, '#e5484d', 0.4, '#f97316', 0.6, '#f5b83d'],
+      'line-width': width(1, 9, roadScale),
+      'line-opacity': dark ? 0.95 : 0.9,
+      'line-blur': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 16, 1]
+    };
+    // Main roads at every zoom; side streets only once zoomed in (keeps the zoomed-out city clean)
+    map.addLayer({ id: 'tt-flow-minor', type: 'line', source: 'tt-flow', 'source-layer': 'Traffic flow', minzoom: 13,
+      filter: ['all', slow, ['!', isMain]], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: flowPaint }, below);
     map.addLayer({ id: 'tt-flow', type: 'line', source: 'tt-flow', 'source-layer': 'Traffic flow',
-      filter: ['all', ['!=', ['get', 'road_closure'], true], ['<', ['to-number', ['get', 'traffic_level'], 1], 0.75]],
-      layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: {
-        // traffic_level = current speed / normal speed
-        'line-color': ['step', ['to-number', ['get', 'traffic_level'], 1], '#8b1e1e', 0.15, '#e5484d', 0.4, '#f97316', 0.6, '#f5b83d'],
-        'line-width': width(1, 9, roadScale),
-        'line-opacity': dark ? 0.95 : 0.9,
-        'line-blur': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 16, 1]
-      } }, below);
+      filter: ['all', slow, isMain], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: flowPaint }, below);
     map.addLayer({ id: 'tt-flow-closed', type: 'line', source: 'tt-flow', 'source-layer': 'Traffic flow',
       filter: ['==', ['get', 'road_closure'], true],
       paint: { 'line-color': dark ? '#ff6b6b' : '#8b1e1e', 'line-width': width(1, 7), 'line-dasharray': [1.5, 1.5] } }, below);
@@ -1502,12 +1508,8 @@
   map.on('mouseenter', 'tt-inc-badge', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'tt-inc-badge', () => { map.getCanvas().style.cursor = pinMode ? 'crosshair' : ''; });
 
-  // Live traffic changes: point the sources at fresh tiles every 2 minutes (no flicker)
-  setInterval(() => {
-    if (!trafficOn || !mapReady) return;
-    map.getSource('tt-flow')?.setTiles(ttTiles('flow/relative'));
-    map.getSource('tt-inc')?.setTiles(ttTiles('incidents'));
-  }, 120000);
+  // Live traffic changes: reload the traffic layers every 2 minutes while they're on
+  setInterval(() => { if (trafficOn && mapReady) syncTraffic(); }, 120000);
 
   // ---- Directions ----
   const dirEl = document.getElementById('dir'), dirTo = document.getElementById('dirTo'),
