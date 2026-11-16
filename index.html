@@ -191,6 +191,11 @@
   .locate-btn[data-state=searching] { color: #2f80ed; animation: loc-pulse 1s ease-in-out infinite; }
   @keyframes loc-pulse { 50% { opacity: .35; } }
   [data-theme=dark] .locate-btn { color: #cfd6dd; }
+  .country-btn { display: flex !important; align-items: center; justify-content: center; color: #555; }
+  .country-btn.on { color: #2f80ed; }
+  .country-btn.busy { animation: loc-pulse 1s ease-in-out infinite; color: #2f80ed; }
+  [data-theme=dark] .country-btn { color: #cfd6dd; }
+  [data-theme=dark] .country-btn.on, [data-theme=dark] .country-btn.busy { color: #5aa2ff; }
   [data-theme=dark] .locate-btn[data-state=following], [data-theme=dark] .locate-btn[data-state=searching] { color: #5aa2ff; }
   #status.err { color: #b42318; }
 
@@ -302,10 +307,10 @@
 
   // ---- Themes: map palettes (UI colors live in the CSS under [data-theme=dark]) ----
   const MAP_THEMES = {
-    light: { land: '#f1f3f5', water: '#c9d3dc', park: '#e9edf0', road: '#e2e6ea', building: '#ffffff',
+    light: { land: '#f1f3f5', water: '#c9d3dc', park: '#e9edf0', road: '#e2e6ea', building: '#ffffff', border: '#9aa6b2',
              light: { color: '#ffffff', intensity: 0.35 }, sky: '#f4f6f8',
              label: { fg: '#1c2630', sub: '#4a5866', halo: 'rgba(255,255,255,.95)' } },
-    dark:  { land: '#1a1f25', water: '#0d131a', park: '#1c232a', road: '#2b333c', building: '#454e59',
+    dark:  { land: '#1a1f25', water: '#0d131a', park: '#1c232a', road: '#2b333c', building: '#454e59', border: '#5c6a78',
              light: { color: '#c9d6ea', intensity: 0.45 }, sky: '#11151a',
              label: { fg: '#eef1f4', sub: '#a7b1bb', halo: 'rgba(13,17,22,.95)' } }
   };
@@ -337,6 +342,13 @@
           'line-color': T.road,
           'line-width': ['interpolate', ['exponential', 1.5], ['zoom'], 12, 0.6, 16, 6, 19, 24]
         } },
+      // Country borders (land only), fading out as you zoom into the city
+      { id: 'borders', type: 'line', source: 'omt', 'source-layer': 'boundary',
+        filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]],
+        layout: { 'line-join': 'round' },
+        paint: { 'line-color': T.border, 'line-dasharray': [3, 2],
+                 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.8, 8, 1.6, 12, 2.2],
+                 'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 1, 14, 0] } },
       { id: 'buildings', type: 'fill-extrusion', source: 'omt', 'source-layer': 'building',
         minzoom: 13,
         paint: {
@@ -429,6 +441,70 @@
     onRemove() {}
   }
   map.addControl(new LocateControl(), 'bottom-right');
+
+  // ---- "Whole country" button: fit the country under the view centre; click again to go back ----
+  // Uses Photon (the search service) with the *view centre*, never your GPS position.
+  const countryExtents = {}; // country code -> [minLng, maxLat, maxLng, minLat]
+  let countryBtn = null, countryReturn = null, countryBusy = false;
+  class CountryControl {
+    onAdd() {
+      const div = document.createElement('div');
+      div.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      countryBtn = document.createElement('button');
+      countryBtn.type = 'button';
+      countryBtn.className = 'country-btn';
+      countryBtn.title = 'Show the whole country';
+      countryBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8">' +
+        '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.7 3.9 5.7 3.9 9s-1.3 6.3-3.9 9c-2.6-2.7-3.9-5.7-3.9-9S9.4 5.7 12 3z"/></svg>';
+      countryBtn.onclick = onCountryClick;
+      div.append(countryBtn);
+      return div;
+    }
+    onRemove() {}
+  }
+  map.addControl(new CountryControl(), 'bottom-right');
+
+  // Any camera move *you* make (drag, scroll, pinch, keys) cancels "click again to go back"
+  map.on('movestart', e => {
+    if (e.originalEvent && countryReturn) { countryReturn = null; setCountryBtn(false); }
+  });
+  function setCountryBtn(showingCountry, name) {
+    countryBtn.classList.toggle('on', showingCountry);
+    countryBtn.title = showingCountry ? 'Back to where you were' : 'Show the whole country';
+    if (name) countryBtn.dataset.country = name;
+  }
+
+  async function onCountryClick() {
+    if (countryBusy) return;
+    if (countryReturn) { // second click: go back
+      const back = countryReturn; countryReturn = null; setCountryBtn(false);
+      map.flyTo({ ...back, duration: 1600, essential: true });
+      return;
+    }
+    countryBusy = true; countryBtn.classList.add('busy');
+    try {
+      const c = map.getCenter();
+      const rev = await (await fetch(`https://photon.komoot.io/reverse?lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&limit=1&lang=en`)).json();
+      const p = rev.features && rev.features[0] && rev.features[0].properties;
+      if (!p || !p.countrycode) return setStatus('No country under the middle of the map (open sea?)', true, 4000);
+      let ext = countryExtents[p.countrycode];
+      if (!ext) {
+        const res = await (await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(p.country)}&osm_tag=place:country&limit=5&lang=en`)).json();
+        const match = (res.features || []).find(f => f.properties.countrycode === p.countrycode && f.properties.extent);
+        if (!match) return setStatus(`Couldn't find the outline of ${p.country}`, true, 4000);
+        ext = countryExtents[p.countrycode] = match.properties.extent;
+      }
+      countryReturn = { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() };
+      map.fitBounds([[ext[0], ext[3]], [ext[2], ext[1]]],
+        { padding: { top: 70, bottom: 50, left: 50, right: 70 }, pitch: Math.min(map.getPitch(), 35), bearing: 0, duration: 1800, essential: true });
+      setCountryBtn(true, p.country);
+      setStatus(`${p.country} · click 🌐 again to go back`, false, 4000);
+    } catch {
+      setStatus("Couldn't reach the country lookup. Check your connection.", true, 4000);
+    } finally {
+      countryBusy = false; countryBtn.classList.remove('busy');
+    }
+  }
 
   function centerOnMe(fly) {
     if (!meLngLat) return;
@@ -1747,6 +1823,7 @@
     map.setPaintProperty('water', 'fill-color', T.water);
     map.setPaintProperty('park', 'fill-color', T.park);
     map.setPaintProperty('roads', 'line-color', T.road);
+    map.setPaintProperty('borders', 'line-color', T.border);
     map.setPaintProperty('buildings', 'fill-extrusion-color', T.building);
     map.setLight(lightOf(T));
     map.setSky(skyOf(T));
