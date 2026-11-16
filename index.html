@@ -361,6 +361,23 @@
 
   const statusEl = document.getElementById('status');
   let meMarker = null, meLngLat = null;
+  // Direction you're travelling (degrees from north), when known: from GPS while moving,
+  // or worked out from your last two positions. Lets routing start you on the correct
+  // side of a divided road instead of the nearest (possibly opposite) carriageway.
+  let meHeading = null, lastFix = null;
+  function noteHeading(coords) {
+    const { latitude: lat, longitude: lng, heading, speed } = coords;
+    if (typeof heading === 'number' && !isNaN(heading) && (speed ?? 0) > 1) meHeading = heading;
+    else if (lastFix && haversine(lastFix, { lat, lng }) > 15) {
+      const r = Math.PI / 180, dL = (lng - lastFix.lng) * r;
+      const y = Math.sin(dL) * Math.cos(lat * r);
+      const x = Math.cos(lastFix.lat * r) * Math.sin(lat * r) - Math.sin(lastFix.lat * r) * Math.cos(lat * r) * Math.cos(dL);
+      meHeading = (Math.atan2(y, x) / r + 360) % 360;
+    }
+    if (!lastFix || haversine(lastFix, { lat, lng }) > 15) lastFix = { lat, lng, t: Date.now() };
+    // A heading older than 2 minutes without movement is stale
+    if (lastFix && Date.now() - lastFix.t > 120000 && !((speed ?? 0) > 1)) meHeading = null;
+  }
   let statusTimer = null;
   function setStatus(msg, isError, clearAfterMs) {
     clearTimeout(statusTimer);
@@ -442,6 +459,7 @@
       const { longitude: lng, latitude: lat, accuracy } = pos.coords;
       const first = !gotFix;
       gotFix = true;
+      noteHeading(pos.coords);
       placeMe(lng, lat);
       if (first) setStatus(`Located you (±${Math.round(accuracy)} m)`, false, 3000);
       if (following) { centerOnMe(first); setLocState('following'); }
@@ -1386,30 +1404,82 @@
   // Needs window.CLAY_CONFIG.tomtomKey (config.js). Without it, these features stay hidden.
   // =====================================================================
   const TT_KEY = (window.CLAY_CONFIG && window.CLAY_CONFIG.tomtomKey) || '';
-  const TT = 'https://api.tomtom.com';
+  // API host; config.js can point this at a proxy (tomtomBase) instead of calling TomTom directly
+  const TT = (window.CLAY_CONFIG && window.CLAY_CONFIG.tomtomBase) || 'https://api.tomtom.com';
 
-  // ---- Traffic overlay (raster tiles painted on the ground, under the buildings) ----
+  // ---- Traffic overlay: TomTom *vector* tiles, styled here so lines stay crisp at every zoom/tilt ----
+  // Like Waze, only slowed roads are drawn (free-flowing roads stay clean). Lines sit on the ground,
+  // under any drawn route and under the buildings; incident badges sit on top.
   const trafficBtn = document.getElementById('trafficBtn');
   let trafficOn = false;
   try { trafficOn = localStorage.getItem('clayMap.traffic') === '1'; } catch {}
   trafficBtn.hidden = !TT_KEY;
+  const TRAFFIC_LAYERS = ['tt-inc-badge', 'tt-inc-line', 'tt-flow', 'tt-flow-closed'];
+  const ttTiles = kind => [`${TT}/traffic/map/4/tile/${kind}/{z}/{x}/{y}.pbf?key=${TT_KEY}&t=${Math.floor(Date.now() / 120000)}`];
+
+  // Incident badges: small round icons drawn once into the map's image store
+  const INCIDENT_KINDS = { // TomTom iconCategory -> look
+    1: ['💥', '#e5484d'], 3: ['⚠', '#f59e0b'], 6: ['🚗', '#e5484d'], 7: ['⛔', '#f97316'], 8: ['⛔', '#8b1e1e'],
+    9: ['🚧', '#f59e0b'], 11: ['🌊', '#2f80ed'], 14: ['🛠', '#f97316'], 0: ['!', '#6b7280']
+  };
+  function addIncidentImages() {
+    for (const [cat, [glyph, color]] of Object.entries(INCIDENT_KINDS)) {
+      const id = 'inc-' + cat;
+      if (map.hasImage(id)) continue;
+      const S = 64, c = document.createElement('canvas'); c.width = c.height = S;
+      const g = c.getContext('2d');
+      g.beginPath(); g.arc(S / 2, S / 2, S / 2 - 4, 0, Math.PI * 2);
+      g.fillStyle = color; g.fill(); g.lineWidth = 5; g.strokeStyle = '#fff'; g.stroke();
+      g.font = `${S * 0.44}px "Segoe UI Emoji","Apple Color Emoji",system-ui,sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff';
+      g.fillText(glyph, S / 2, S / 2 + 2);
+      map.addImage(id, g.getImageData(0, 0, S, S), { pixelRatio: 2 });
+    }
+  }
 
   function syncTraffic() {
     trafficBtn.classList.toggle('on', trafficOn && !!TT_KEY);
     if (!mapReady || !map.isStyleLoaded()) return;
-    for (const id of ['tt-incidents', 'tt-flow']) {
-      if (map.getLayer(id)) map.removeLayer(id);
-      if (map.getSource(id)) map.removeSource(id);
-    }
+    for (const id of TRAFFIC_LAYERS) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of ['tt-flow', 'tt-inc']) if (map.getSource(id)) map.removeSource(id);
     if (!trafficOn || !TT_KEY) return;
     const dark = document.documentElement.dataset.theme === 'dark';
-    const tiles = (kind, style) => [`${TT}/traffic/map/4/tile/${kind}/${style}/{z}/{x}/{y}.png?key=${TT_KEY}&tileSize=512`];
     const below = map.getLayer('route-casing') ? 'route-casing' : 'buildings'; // keep a drawn route on top
-    map.addSource('tt-flow', { type: 'raster', tileSize: 512, tiles: tiles('flow', dark ? 'relative0-dark' : 'relative0'),
-                               attribution: 'Traffic © TomTom' });
-    map.addLayer({ id: 'tt-flow', type: 'raster', source: 'tt-flow', paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0 } }, below);
-    map.addSource('tt-incidents', { type: 'raster', tileSize: 512, tiles: tiles('incidents', dark ? 'night' : 's3') });
-    map.addLayer({ id: 'tt-incidents', type: 'raster', source: 'tt-incidents', paint: { 'raster-fade-duration': 0 } }, 'buildings');
+    // Bigger roads get slightly thicker lines (zoom must stay the top-level input, so scale each stop)
+    const roadScale = ['match', ['get', 'road_type'], ['Motorway', 'International road'], 1.25, ['Major road', 'Secondary road'], 1, 0.75];
+    const width = (lo, hi, scale) => {
+      const s = v => (scale ? ['*', v, scale] : v);
+      return ['interpolate', ['exponential', 1.6], ['zoom'], 9, s(lo), 13, s(lo * 2.2), 16, s(hi * 0.55), 19, s(hi)];
+    };
+
+    map.addSource('tt-flow', { type: 'vector', tiles: ttTiles('flow/relative'), maxzoom: 18, attribution: 'Traffic © TomTom' });
+    map.addLayer({ id: 'tt-flow', type: 'line', source: 'tt-flow', 'source-layer': 'Traffic flow',
+      filter: ['all', ['!=', ['get', 'road_closure'], true], ['<', ['to-number', ['get', 'traffic_level'], 1], 0.75]],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        // traffic_level = current speed / normal speed
+        'line-color': ['step', ['to-number', ['get', 'traffic_level'], 1], '#8b1e1e', 0.15, '#e5484d', 0.4, '#f97316', 0.6, '#f5b83d'],
+        'line-width': width(1, 9, roadScale),
+        'line-opacity': dark ? 0.95 : 0.9,
+        'line-blur': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 16, 1]
+      } }, below);
+    map.addLayer({ id: 'tt-flow-closed', type: 'line', source: 'tt-flow', 'source-layer': 'Traffic flow',
+      filter: ['==', ['get', 'road_closure'], true],
+      paint: { 'line-color': dark ? '#ff6b6b' : '#8b1e1e', 'line-width': width(1, 7), 'line-dasharray': [1.5, 1.5] } }, below);
+
+    addIncidentImages();
+    map.addSource('tt-inc', { type: 'vector', tiles: ttTiles('incidents'), maxzoom: 18 });
+    // Badges only at the start of each incident (or one per cluster when zoomed out)
+    map.addLayer({ id: 'tt-inc-badge', type: 'symbol', source: 'tt-inc', 'source-layer': 'Traffic incident POI',
+      minzoom: 10,
+      filter: ['any', ['==', ['get', 'poi_type'], 'start_poi'], ['has', 'cluster_size']],
+      layout: {
+        'icon-image': ['concat', 'inc-', ['match', ['to-number', ['get', 'icon_category'], 0],
+          [1, 3, 6, 7, 8, 9, 11, 14], ['to-string', ['get', 'icon_category']], '0']],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.55, 14, 0.8, 17, 1],
+        'icon-allow-overlap': false, 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport',
+        'symbol-sort-key': ['-', 10, ['to-number', ['get', 'magnitude'], 0]] // worst incidents win when crowded
+      } });
   }
   trafficBtn.onclick = () => {
     trafficOn = !trafficOn;
@@ -1417,8 +1487,27 @@
     syncTraffic();
   };
   map.on('load', syncTraffic);
-  // Live traffic changes: refresh the overlay every 2 minutes while it's on
-  setInterval(() => { if (trafficOn) syncTraffic(); }, 120000);
+
+  // Click an incident badge: what's happening + delay
+  map.on('click', 'tt-inc-badge', e => {
+    const f = e.features && e.features[0];
+    if (!f) return;
+    const q = f.properties;
+    const what = q.description || q.description_0 || (q.cluster_size ? `${q.cluster_size} incidents here` : 'Traffic incident');
+    const delay = +q.delay > 0 ? ` · ${fmtDuration(+q.delay)} delay` : '';
+    const box = mk('div', { className: 'pin-pop' });
+    box.append(mk('b', { textContent: what }), mk('div', { textContent: (q.road_type || '') + delay }));
+    new maplibregl.Popup({ offset: 12, closeButton: false }).setLngLat(f.geometry.coordinates).setDOMContent(box).addTo(map);
+  });
+  map.on('mouseenter', 'tt-inc-badge', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'tt-inc-badge', () => { map.getCanvas().style.cursor = pinMode ? 'crosshair' : ''; });
+
+  // Live traffic changes: point the sources at fresh tiles every 2 minutes (no flicker)
+  setInterval(() => {
+    if (!trafficOn || !mapReady) return;
+    map.getSource('tt-flow')?.setTiles(ttTiles('flow/relative'));
+    map.getSource('tt-inc')?.setTiles(ttTiles('incidents'));
+  }, 120000);
 
   // ---- Directions ----
   const dirEl = document.getElementById('dir'), dirTo = document.getElementById('dirTo'),
@@ -1480,6 +1569,9 @@
       key: TT_KEY, travelMode: dir.mode, routeType: 'fastest', traffic: dir.mode === 'car' ? 'true' : 'false',
       instructionsType: 'text', language: 'en-GB', sectionType: 'traffic', computeTravelTimeFor: 'all'
     });
+    // Starting from you while driving: tell TomTom which way you're heading so it doesn't
+    // snap you onto the opposite side of a divided road
+    if (!dir.origin && dir.mode === 'car' && meHeading !== null) params.set('vehicleHeading', String(Math.round(meHeading)));
     let data;
     try {
       const res = await fetch(`${TT}/routing/1/calculateRoute/${from.lat},${from.lng}:${d.lat},${d.lng}/json?${params}`);
@@ -1508,7 +1600,7 @@
   // ---- Route drawing: blue line on the ground (under buildings), jams colored by severity ----
   const JAM_COLORS = ['#f5c542', '#f5a524', '#f97316', '#e5484d', '#8b1e1e']; // magnitudeOfDelay 0..4
   function clearRouteLayers() {
-    for (const id of ['route-traffic', 'route-line', 'route-casing']) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of ['route-arrows', 'route-traffic', 'route-line', 'route-casing']) if (map.getLayer(id)) map.removeLayer(id);
     for (const id of ['route', 'route-traffic']) if (map.getSource(id)) map.removeSource(id);
   }
   function drawRoute(route, from) {
@@ -1527,6 +1619,20 @@
                    paint: { 'line-color': '#2f80ed', 'line-width': w(3, 14) } }, 'buildings');
     map.addLayer({ id: 'route-traffic', type: 'line', source: 'route-traffic', layout: { 'line-cap': 'round', 'line-join': 'round' },
                    paint: { 'line-color': ['get', 'color'], 'line-width': w(3, 14) } }, 'buildings');
+    // Direction-of-travel chevrons along the route
+    if (!map.hasImage('route-arrow')) {
+      const S = 48, c = document.createElement('canvas'); c.width = c.height = S;
+      const g = c.getContext('2d');
+      g.strokeStyle = '#fff'; g.lineWidth = 7; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.moveTo(S * 0.3, S * 0.22); g.lineTo(S * 0.68, S * 0.5); g.lineTo(S * 0.3, S * 0.78); g.stroke();
+      map.addImage('route-arrow', g.getImageData(0, 0, S, S), { pixelRatio: 2 });
+    }
+    map.addLayer({ id: 'route-arrows', type: 'symbol', source: 'route',
+      layout: { 'symbol-placement': 'line', 'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 12, 60, 17, 90],
+                'icon-image': 'route-arrow', 'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 14, 0.75, 17, 1.05],
+                'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map',
+                'icon-allow-overlap': true, 'icon-ignore-placement': true },
+      paint: { 'icon-opacity': 0.95 } }, 'buildings');
     // Custom start marker (only when not starting from your own position)
     if (dir.origin) {
       if (!startMarker) { const el = document.createElement('div'); el.className = 'start-pin'; startMarker = new maplibregl.Marker({ element: el }); }
