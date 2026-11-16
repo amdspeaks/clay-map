@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Clay Map</title>
+<!-- Add to Home Screen: runs full-screen like an app -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Clay Map">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#eef1f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14181d" media="(prefers-color-scheme: dark)">
 <script>
   // Pick the theme before anything paints (no light flash in dark mode)
   (function () {
@@ -246,6 +256,53 @@
   [data-theme=dark] .maplibregl-ctrl-attrib { background: rgba(31,37,44,.85); color: #9aa4ae; }
   [data-theme=dark] .maplibregl-ctrl-attrib a { color: #b8c1ca; }
   [data-theme=dark] .maplibregl-ctrl-attrib-button { filter: invert(.9); }
+
+  /* ===================== Phones ===================== */
+  #tools { display: contents; }            /* laptop: tools sit in the top row as before */
+  .menu-btn { display: none !important; }
+  @media (max-width: 640px) {
+    /* Top bar: full-width search + ☰ menu, clear of the notch */
+    #ui { top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left));
+          right: calc(56px + env(safe-area-inset-right)); gap: 6px; flex-wrap: nowrap; }
+    #search { flex: 1; width: auto; min-width: 0; }
+    #search input { font-size: 16px; padding: 11px 12px; }   /* 16px+ stops iPhone zooming on tap */
+    .menu-btn { display: block !important; flex: 0 0 auto; width: 44px; height: 43px; padding: 0 !important; font-size: 19px !important; }
+    #ui.menu-open .menu-btn { background: #2f80ed !important; color: #fff !important; }
+    #tools { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 4; flex-direction: column;
+             gap: 2px; padding: 6px; min-width: 200px; background: #fff; border-radius: 12px; box-shadow: 0 6px 22px rgba(0,0,0,.22); }
+    #ui.menu-open #tools { display: flex; }
+    #tools button { width: 100%; text-align: left; box-shadow: none !important; padding: 12px 12px; font-size: 15px; border-radius: 8px; }
+    #status { position: absolute; top: calc(100% + 6px); left: 0; max-width: calc(100vw - 90px); }
+    #ui.menu-open #status { display: none !important; }
+    #results li { padding: 11px 12px; }
+
+    /* Coordinates readout is a laptop tool */
+    #coords { display: none; }
+
+    /* Map buttons: bigger tap targets, clear of notch/home bar, lifted above the directions sheet */
+    .maplibregl-ctrl-top-right { top: env(safe-area-inset-top); right: env(safe-area-inset-right); }
+    .maplibregl-ctrl-bottom-right { bottom: env(safe-area-inset-bottom); right: env(safe-area-inset-right); transition: bottom .25s; }
+    .maplibregl-ctrl-group button { width: 40px; height: 40px; }
+    body.dir-open .maplibregl-ctrl-bottom-right { bottom: calc(46vh + 2px); }
+
+    /* Directions: bottom sheet */
+    #dir { left: 0; right: 0; top: auto; bottom: 0; width: 100%; max-width: none; max-height: 46vh;
+           border-radius: 16px 16px 0 0; padding: 8px 14px calc(12px + env(safe-area-inset-bottom));
+           box-shadow: 0 -4px 20px rgba(0,0,0,.22); }
+    #dir::before { content: ''; display: block; width: 38px; height: 4px; border-radius: 2px; background: #c8d0d8; margin: 0 auto 8px; }
+    #dir button { padding: 9px 11px; }
+    #dirSteps li { padding: 11px 4px; }
+
+    /* Popups and their inputs */
+    .maplibregl-popup-content { max-width: calc(100vw - 32px); }
+    .pin-edit input, .pin-edit select { font-size: 16px; }
+    .pin-edit button, .pin-pop button, .ctx-pop button { padding: 9px 12px; }
+    [data-theme=dark] #tools { background: #1f252c; box-shadow: 0 6px 22px rgba(0,0,0,.6); }
+    [data-theme=dark] #dir::before { background: #3a434d; }
+  }
+  .ctx-pop { display: flex; flex-direction: column; gap: 6px; }
+  .ctx-pop .alt { background: #eef2f6; color: #333; }
+  [data-theme=dark] .ctx-pop .alt { background: #2a323b; color: #e2e6ea; }
 </style>
 </head>
 <body>
@@ -257,14 +314,18 @@
     <input id="q" type="search" placeholder="Search places (e.g. Burj Khalifa)" autocomplete="off">
     <ul id="results"></ul>
   </div>
-  <button id="tilt">Toggle tilt-shift</button>
-  <button id="theme" title="Theme: Auto follows your system setting">◐ Auto</button>
-  <button id="trafficBtn" title="Show live traffic and incidents (TomTom)" hidden>🚦 Traffic</button>
-  <button id="pinMode" title="Click the map to drop pins (Esc to stop)">Drop pins</button>
-  <button id="pinImport" title="Load pins from a .geojson (from Export pins) or GPX waypoints">Import pins</button>
-  <input id="pinFile" type="file" accept=".geojson,.json,.gpx,application/geo+json,application/json,application/gpx+xml" hidden>
-  <button id="pinExport" style="display:none">Export pins</button>
-  <button id="pinClear" style="display:none">Clear pins</button>
+  <!-- Phones: the tools below fold into this menu -->
+  <button id="menuBtn" class="menu-btn" title="Menu" aria-label="Menu" aria-expanded="false" aria-controls="tools">☰</button>
+  <div id="tools">
+    <button id="trafficBtn" title="Show live traffic and incidents (TomTom)" hidden>🚦 Traffic</button>
+    <button id="theme" title="Theme: Auto follows your system setting">◐ Auto</button>
+    <button id="tilt">Toggle tilt-shift</button>
+    <button id="pinMode" title="Click the map to drop pins (Esc to stop)">Drop pins</button>
+    <button id="pinImport" title="Load pins from a .geojson (from Export pins) or GPX waypoints">Import pins</button>
+    <input id="pinFile" type="file" accept=".geojson,.json,.gpx,application/geo+json,application/json,application/gpx+xml" hidden>
+    <button id="pinExport" style="display:none">Export pins</button>
+    <button id="pinClear" style="display:none">Clear pins</button>
+  </div>
   <span id="status" style="display:none"></span>
 </div>
 <div id="dir" hidden>
@@ -1367,17 +1428,21 @@
   pinModeBtn.onclick = () => setPinMode(!pinMode);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && pinMode && document.activeElement.tagName !== 'INPUT') setPinMode(false); });
 
-  map.on('click', e => {
-    if (!pinMode || placingMe) return;
-    // Ignore clicks on existing pins/markers/popups so opening a pin doesn't drop a new one
-    if (e.originalEvent?.target?.closest?.('.maplibregl-marker, .maplibregl-popup')) return;
+  function dropPinAt(lngLat) {
     const p = Object.assign({ label: '', img: null }, pinDefaults, {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      name: `Pin ${pins.length + 1}`, lng: e.lngLat.lng, lat: e.lngLat.lat });
+      name: `Pin ${pins.length + 1}`, lng: lngLat.lng, lat: lngLat.lat });
     pins.push(p);
     addPinMarker(p, false);
     savePins();
     updateDistances();
+    return p;
+  }
+  map.on('click', e => {
+    if (!pinMode || placingMe) return;
+    // Ignore clicks on existing pins/markers/popups so opening a pin doesn't drop a new one
+    if (e.originalEvent?.target?.closest?.('.maplibregl-marker, .maplibregl-popup')) return;
+    dropPinAt(e.lngLat);
   });
 
   pinClearBtn.onclick = () => {
@@ -1627,12 +1692,15 @@
       destMarker = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -2] });
     }
     destMarker.setLngLat([dest.lng, dest.lat]).addTo(map);
+    document.body.classList.add('dir-open'); // phones: lifts the map buttons above the sheet
+    closeMenu();
     computeRoute();
   }
 
   function closeDirections() {
     dir.dest = null; dir.origin = null; dir.route = null; dir.waitingForMe = false; dir.seq++;
     dirEl.hidden = true;
+    document.body.classList.remove('dir-open');
     destMarker?.remove(); startMarker?.remove();
     clearRouteLayers();
     syncFromLabel();
@@ -1735,8 +1803,11 @@
     // Frame the whole route, leaving room for the panel on wide screens
     const b = new maplibregl.LngLatBounds();
     coords.forEach(c => b.extend(c));
-    const wide = innerWidth > 700;
-    map.fitBounds(b, { padding: { top: 90, bottom: 60, left: wide ? 370 : 40, right: 60 }, maxZoom: 16.5,
+    const wide = innerWidth > 700, phone = innerWidth <= 640;
+    // Laptop: room for the side panel. Phone: room for the bottom sheet (46% of the screen).
+    const pad = phone ? { top: 70, bottom: Math.round(innerHeight * 0.46) + 24, left: 30, right: 56 }
+                      : { top: 90, bottom: 60, left: wide ? 370 : 40, right: 60 };
+    map.fitBounds(b, { padding: pad, maxZoom: 16.5,
                        pitch: Math.min(map.getPitch(), 50), duration: 1400 });
   }
 
@@ -1800,18 +1871,55 @@
   };
   dirUseMe.onclick = () => { dir.origin = null; computeRoute(); };
 
-  // Right-click empty map: "Directions to here"
+  // Right-click (laptop) or long-press (phone) on empty map: "Directions to here" / "Drop a pin here"
   let ctxPopup = null;
-  map.on('contextmenu', e => {
-    if (!TT_KEY || e.originalEvent?.target?.closest?.('.maplibregl-marker, .maplibregl-popup')) return;
+  function showMapMenu(lngLat) {
     ctxPopup?.remove();
+    const at = { lng: lngLat.lng, lat: lngLat.lat };
     const box = mk('div', { className: 'ctx-pop' });
-    const b = mk('button', { textContent: 'Directions to here' });
-    const at = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-    b.onclick = () => { ctxPopup.remove(); openDirections({ ...at, name: fmt(at.lat, at.lng) }); };
-    box.append(b);
-    ctxPopup = new maplibregl.Popup({ closeButton: false, offset: 6 }).setLngLat(e.lngLat).setDOMContent(box).addTo(map);
+    if (TT_KEY) {
+      const b = mk('button', { textContent: 'Directions to here' });
+      b.onclick = () => { ctxPopup.remove(); openDirections({ ...at, name: fmt(at.lat, at.lng) }); };
+      box.append(b);
+    }
+    const pinB = mk('button', { className: 'alt', textContent: '📍 Drop a pin here' });
+    pinB.onclick = () => { ctxPopup.remove(); dropPinAt(at); };
+    box.append(pinB);
+    ctxPopup = new maplibregl.Popup({ closeButton: false, offset: 6 }).setLngLat(lngLat).setDOMContent(box).addTo(map);
+  }
+  const onMarkerOrPopup = ev => ev?.target?.closest?.('.maplibregl-marker, .maplibregl-popup');
+  let lastLongPress = 0;
+  map.on('contextmenu', e => {
+    if (onMarkerOrPopup(e.originalEvent)) return;
+    if (Date.now() - lastLongPress < 800) return; // Android also fires contextmenu after a long-press
+    showMapMenu(e.lngLat);
   });
+  // Touch long-press (iPhone never sends contextmenu for this)
+  let pressTimer = null, pressStart = null;
+  map.on('touchstart', e => {
+    clearTimeout(pressTimer);
+    if (e.originalEvent.touches.length !== 1 || onMarkerOrPopup(e.originalEvent)) return;
+    pressStart = e.point;
+    pressTimer = setTimeout(() => { lastLongPress = Date.now(); showMapMenu(map.unproject(pressStart)); }, 550);
+  });
+  map.on('touchmove', e => { if (pressStart && Math.hypot(e.point.x - pressStart.x, e.point.y - pressStart.y) > 10) clearTimeout(pressTimer); });
+  map.on('touchend', () => clearTimeout(pressTimer));
+  map.on('touchcancel', () => clearTimeout(pressTimer));
+  map.on('movestart', () => clearTimeout(pressTimer));
+
+  // ---- Phone menu (☰) ----
+  const uiEl = document.getElementById('ui'), menuBtn = document.getElementById('menuBtn');
+  function closeMenu() { uiEl.classList.remove('menu-open'); menuBtn.setAttribute('aria-expanded', 'false'); }
+  menuBtn.onclick = e => {
+    e.stopPropagation();
+    const open = !uiEl.classList.contains('menu-open');
+    uiEl.classList.toggle('menu-open', open);
+    menuBtn.setAttribute('aria-expanded', String(open));
+  };
+  // Picking a tool, or tapping the map, closes the menu
+  document.getElementById('tools').addEventListener('click', e => { if (e.target.closest('button')) closeMenu(); });
+  map.on('mousedown', closeMenu);
+  map.on('touchstart', closeMenu);
 
   let tiltOn = true;
   document.getElementById('tilt').onclick = () => {
